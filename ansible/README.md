@@ -26,7 +26,7 @@ Ansible playbook for Ubuntu 26.04 (resolute) / amd64. Uses `ansible.builtin` mod
 ./bootstrap.sh -r owner/repo -n   # clone only, don't run the playbook
 ```
 
-Flags: `-r` repo, `-d` clone dir (default `~/AI/workstation`), `-p` playbook name, `-n` no run, `-h` help.
+Flags: `-r` repo, `-d` clone dir (default `~/ansible-installer-01`), `-p` playbook name, `-n` no run, `-h` help.
 
 Copy it to the new machine by hand (scp, USB, paste) — it can't be `curl | bash`-ed from the private repo it's the key to.
 

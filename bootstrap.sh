@@ -20,7 +20,9 @@
 
 set -euo pipefail
 
-CLONE_DIR="${CLONE_DIR:-$HOME/AI/workstation}"
+# Deliberately not under ~/AI: that is itself a git repo now, and cloning into
+# it would nest a checkout inside a checkout. Override with -d.
+CLONE_DIR="${CLONE_DIR:-$HOME/ansible-installer-01}"
 PLAYBOOK="${PLAYBOOK:-site.yml}"
 RUN_PLAYBOOK=1
 
@@ -136,12 +138,9 @@ gh auth setup-git --hostname github.com || die "gh auth setup-git failed"
 gh_user="$(gh api user --jq .login 2>/dev/null || echo '')"
 [ -n "$gh_user" ] && ok "authenticated as $gh_user"
 
-# The passkey login mints a token with 'repo'; a pre-existing gh session or an
-# injected GH_TOKEN might not have it, which fails only later at clone time.
-if ! gh auth status --hostname github.com 2>&1 | grep -q "'repo'"; then
-    warn "This GitHub session may lack the 'repo' scope, which private clones
-     need. If the clone below fails, run: gh auth refresh -h github.com -s repo"
-fi
+# No scope pre-check here on purpose: gh's auth status output is not a stable
+# contract to grep, and the 'gh repo view' check below tests real access to the
+# real repo, which is what actually matters. Its failure message covers scope.
 
 # --- 4. repository ----------------------------------------------------------
 if [ -z "${GIT_REPO:-}" ]; then
