@@ -12,3 +12,7 @@ Includes:
 6. VSCode
 7. btop
 8. Git
+
+AI Tools
+1. Claude Code
+2. OpenCode
