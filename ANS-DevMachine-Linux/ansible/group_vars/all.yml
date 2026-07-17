@@ -1,0 +1,39 @@
+---
+# The unprivileged account that gets group membership and user-scoped tools
+# (Claude Code / OpenCode install into this user's home, not root's).
+target_user: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"
+
+# --- Feature toggles -------------------------------------------------------
+install_docker: true
+install_kvm: true
+install_brave: true
+install_chrome: true
+install_vscode: true
+install_codium: true
+install_btop: true
+install_git: true
+install_appimage_support: true
+install_claude_code: true
+install_opencode: true
+
+# --- Docker ----------------------------------------------------------------
+# Adds target_user to the 'docker' group. This grants effective root on the
+# host: anyone in this group can mount / into a container. Set false to keep
+# Docker sudo-only.
+docker_add_user_to_group: true
+
+# Purge distro-packaged Docker (docker.io, podman-docker, containerd, runc)
+# before installing Docker CE. Off by default because it removes packages you
+# may not expect; Docker's own docs recommend it for a clean install.
+docker_purge_distro_packages: false
+
+# --- Claude Code -----------------------------------------------------------
+# 'apt'    -> signed Anthropic apt repo, system-wide, updates via apt upgrade.
+# 'native' -> curl|bash installer into ~/.local/bin, self-updating.
+# You already have a 'native' install at ~/.local/bin/claude. That path
+# normally precedes /usr/bin in PATH, so switching to 'apt' without removing
+# the old one leaves two installs with the native one still winning.
+claude_code_install_method: native
+
+# 'stable' (~1 week behind, skips known-bad releases) or 'latest'.
+claude_code_channel: stable
