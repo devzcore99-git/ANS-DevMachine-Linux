@@ -104,39 +104,15 @@ command -v apt-get >/dev/null 2>&1 || die "No apt-get. This bootstrap targets
      Debian/Ubuntu, and so does the playbook it runs."
 
 # Escalate with the same binary the playbook will use, mirroring the probe
-# behind ansible_become_exe in group_vars/all.yml. This is what makes one
-# password prompt possible rather than two: sudo and sudo-rs keep separate
-# credential caches, so priming /usr/bin/sudo on Ubuntu 25.10 would leave the
-# playbook's /usr/bin/sudo.ws still unauthenticated.
+# behind ansible_become_exe in group_vars/all.yml, so the two cannot disagree
+# about which sudo they mean.
 if [ -x /usr/bin/sudo.ws ]; then SUDO=/usr/bin/sudo.ws; else SUDO=sudo; fi
 
-info "Priming sudo (you may be prompted)"
-"$SUDO" -v || die "sudo authentication failed."
-
-# sudo refreshes its timestamp when a command *starts*, not when it finishes,
-# so one task longer than timestamp_timeout (15 min by default) would leave the
-# next one unauthenticated — failing partway through rather than up front.
-# Refresh in the background for as long as this script lives.
-keepalive_pid=""
-# Kill the loop's children before the loop itself: it spends nearly all its
-# time blocked in sleep, and killing only the subshell orphans that sleep to
-# linger after the script has exited.
-cleanup() {
-    [ -n "$keepalive_pid" ] || return 0
-    pkill -P "$keepalive_pid" 2>/dev/null || true
-    kill "$keepalive_pid" 2>/dev/null || true
-}
-trap cleanup EXIT
-# stderr is discarded for the whole loop, not just the sudo call: on cleanup the
-# subshell would otherwise announce its own killed sleep as "Terminated".
-while true; do
-    "$SUDO" -n true 2>/dev/null || break
-    sleep 50
-    kill -0 "$$" 2>/dev/null || break
-done 2>/dev/null &
-keepalive_pid=$!
-
 # --- dependencies -----------------------------------------------------------
+# Work out what is missing *before* escalating. On a machine that already has
+# these — every run after the first — this script needs no privileges at all,
+# and the playbook can do the one and only password prompt itself.
+#
 # curl is not used by this script, but the playbook's Claude Code and OpenCode
 # tasks pipe their upstream installers through it.
 need=()
@@ -145,12 +121,20 @@ command -v ansible-playbook >/dev/null 2>&1 || need+=(ansible-core)
 command -v curl >/dev/null 2>&1 || need+=(curl)
 
 if [ ${#need[@]} -gt 0 ]; then
-    info "Installing: ${need[*]}"
+    info "Installing: ${need[*]} (you may be prompted for sudo)"
     "$SUDO" apt-get update -qq
     "$SUDO" DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${need[@]}" \
         || die "package install failed"
+
+    # The playbook will ask again. Nothing is carried over deliberately: the
+    # only ways to avoid the second prompt are to hold the password somewhere
+    # for ansible to read, or to lean on sudo's credential cache — which does
+    # not work anyway, since tty_tickets binds the ticket to the terminal and
+    # ansible runs become from a subprocess with no pty. Typing it twice on a
+    # first run is the better trade.
+    info "Prerequisites installed. The playbook will ask for sudo separately."
 else
-    ok "git, ansible-core and curl already present"
+    ok "git, ansible-core and curl already present (no sudo needed here)"
 fi
 
 command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook still not on PATH"
@@ -358,21 +342,14 @@ if [ -n "$selection_file" ]; then
     pb_args+=(-e "@$(basename "$selection_file")")
 fi
 
-# Pin become to the binary already authenticated above. group_vars probes for
-# the same path, so this only guards against the two probes disagreeing.
+# Pin become to the same sudo this script resolved. group_vars probes for the
+# same path, so this only guards against the two probes disagreeing.
 pb_args+=(-e "ansible_become_exe=$SUDO")
 
-# ansible.cfg asks for the become password by default, which is what a
-# standalone run needs. Here it would be a second prompt for a credential
-# already cached — so suppress it, but only after confirming the cache really
-# is still warm. If it has expired, leave the prompt in place: asking once
-# more beats every task dying on "sudo: a password is required".
-if "$SUDO" -n true 2>/dev/null; then
-    info "Running playbook (reusing the sudo credential from earlier)"
-    ANSIBLE_BECOME_ASK_PASS=False ansible-playbook "${pb_args[@]}"
-else
-    warn "sudo credential expired; you will be asked once more"
-    ansible-playbook "${pb_args[@]}"
-fi
+# ansible.cfg sets become_ask_pass, so the playbook prompts for itself. Nothing
+# here suppresses or pre-fills that: the password is entered where it is used
+# and is never written down or passed on.
+info "Running playbook (it will ask for your sudo password)"
+ansible-playbook "${pb_args[@]}"
 ok "bootstrap complete"
 printf '\nLog out and back in to pick up docker/libvirt group membership.\n'
