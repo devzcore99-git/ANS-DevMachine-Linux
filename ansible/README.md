@@ -38,27 +38,20 @@ The virtualization probe differs because arm64 has no CPU flag for it. KVM on ar
 
 ## Bootstrap a fresh machine
 
-`bootstrap.sh` takes a clean Ubuntu box to a provisioned one. It installs `git`, `ansible-core` and `gh`, signs you in to GitHub **with your passkey**, clones this repo, and offers to run the playbook.
+Get this repository onto the machine yourself — `git clone`, a downloaded zip, `scp`, a USB stick, whatever suits. Then run `bootstrap.sh` from it:
 
 ```bash
-./bootstrap.sh                    # prompts for the repo
-./bootstrap.sh -r owner/repo      # repo up front
-./bootstrap.sh -r owner/repo -n   # clone only, don't run the playbook
+./bootstrap.sh        # install prerequisites, then offer to run site.yml
+./bootstrap.sh -y     # don't prompt, just run it
+./bootstrap.sh -n     # prerequisites only, don't run the playbook
+./bootstrap.sh -p x.yml
 ```
 
-Flags: `-r` repo, `-d` clone dir (default `~/ansible-installer-01`), `-p` playbook name, `-n` no run, `-h` help.
+Flags: `-p` playbook name, `-n` no run, `-y` no prompt, `-h` help.
 
-Copy it to the new machine by hand (scp, USB, paste) — it can't be `curl | bash`-ed from the private repo it's the key to.
+The script installs `git`, `ansible-core` and `curl` if they're missing, warns if `ansible-core` is older than 2.15, then runs the playbook. **It fetches nothing from GitHub** and needs no authentication — it locates the playbook relative to its own path, so an unpacked archive works exactly like a checkout. It resolves symlinks on the way, so it also works symlinked onto your `PATH`.
 
-### On passkeys
-
-Git cannot use a passkey directly: WebAuthn credentials are bound to a browser origin, and Git's HTTPS transport has no way to invoke one. GitHub only accepts a passkey at the website.
-
-So the script runs `gh auth login --web`, the OAuth device flow. It prints a one-time code, you approve on github.com with your passkey, and `gh` stores the resulting OAuth token and wires it into git's credential helper. **Your passkey does the authenticating; the token it mints is what git uses** — you just never type or handle one. Nothing is written to `.git/config`.
-
-For CI, export `GH_TOKEN` to skip the login entirely.
-
-If a clone fails on scope, run `gh auth refresh -h github.com -s repo`.
+It refuses to run as root: the playbook needs your real user for the user-scoped installs (Claude Code, OpenCode) and calls `sudo` itself where required.
 
 ## Requirements
 
@@ -70,12 +63,16 @@ sudo apt install ansible-core
 
 ## Run
 
+To run the playbook directly, without `bootstrap.sh`:
+
 ```bash
-cd ~/AI/ansible
+cd ansible          # from the root of this repository
 ansible-playbook site.yml -K
 ```
 
 `-K` prompts for the sudo password. Dry run first with `--check --diff`.
+
+Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the current directory, never from the playbook's, and this one sets `become_exe` and the inventory — pointing at `ansible/site.yml` from elsewhere silently skips all of it.
 
 ## Selective runs
 
