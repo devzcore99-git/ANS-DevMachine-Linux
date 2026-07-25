@@ -96,17 +96,21 @@ fi
 # the device-flow login matches current GitHub behaviour.
 if ! command -v gh >/dev/null 2>&1; then
     info "Installing GitHub CLI from cli.github.com"
+    # Pin the source to this machine's dpkg architecture rather than assuming
+    # amd64 — cli.github.com publishes amd64, arm64, armhf and i386. Unquoted
+    # heredoc below so deb_arch expands; nothing else in it uses $.
+    deb_arch="$(dpkg --print-architecture)"
     sudo install -d -m 0755 /etc/apt/keyrings
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null \
         || die "could not fetch the GitHub CLI signing key"
     sudo chmod 0644 /etc/apt/keyrings/githubcli-archive-keyring.gpg
-    sudo tee /etc/apt/sources.list.d/github-cli.sources >/dev/null <<'EOF'
+    sudo tee /etc/apt/sources.list.d/github-cli.sources >/dev/null <<EOF
 Types: deb
 URIs: https://cli.github.com/packages
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: ${deb_arch}
 Signed-By: /etc/apt/keyrings/githubcli-archive-keyring.gpg
 Enabled: yes
 EOF

@@ -5,16 +5,39 @@
   gather_facts: true
 
   pre_tasks:
-    - name: Fail early on unsupported platforms
+    - name: Fail early on unsupported distributions
       ansible.builtin.assert:
-        that:
-          - ansible_os_family == 'Debian'
-          - ansible_architecture == 'x86_64'
+        that: ansible_os_family == 'Debian'
         fail_msg: >-
-          This playbook targets Debian/Ubuntu on x86_64. Detected
-          {{ ansible_distribution }} {{ ansible_distribution_version }} on
-          {{ ansible_architecture }}. The third-party apt repos referenced here
-          publish amd64 only in the form used below.
+          This playbook targets Debian/Ubuntu. Detected
+          {{ ansible_distribution }} {{ ansible_distribution_version }}
+          ({{ ansible_os_family }} family).
+      tags: always
+
+    # apt speaks dpkg architecture names (amd64, arm64); the kernel — and so
+    # ansible_architecture — speaks x86_64 and aarch64. The two never match, and
+    # mapping between them here would be guesswork: a 32-bit userland on a
+    # 64-bit kernel reports aarch64 while apt resolves armhf. Ask dpkg, which is
+    # the same thing apt itself consults.
+    - name: Detect dpkg architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: dpkg_arch_probe
+      changed_when: false
+      tags: always
+
+    - name: Record dpkg architecture
+      ansible.builtin.set_fact:
+        deb_arch: "{{ dpkg_arch_probe.stdout | trim }}"
+      tags: always
+
+    - name: Fail early on unsupported architectures
+      ansible.builtin.assert:
+        that: deb_arch in supported_deb_architectures
+        fail_msg: >-
+          Architecture '{{ deb_arch }}' is not in supported_deb_architectures
+          ({{ supported_deb_architectures | join(', ') }}). The third-party apt
+          repos configured below publish those two; on anything else the repo
+          indices 404 and the run fails partway through.
       tags: always
 
     - name: Resolve target user
@@ -121,7 +144,7 @@
         uris: https://download.docker.com/linux/ubuntu
         suites: ["{{ ansible_distribution_release }}"]
         components: [stable]
-        architectures: [amd64]
+        architectures: ["{{ deb_arch }}"]
         signed_by: /etc/apt/keyrings/docker.asc
         state: present
         enabled: true
@@ -161,42 +184,68 @@
       tags: [docker]
 
     # ------------------------------------------------------------------- kvm
-    - name: KVM | Check for hardware virtualization
+    # x86 advertises virtualization through the vmx/svm cpu flag. arm64 has no
+    # equivalent: KVM there depends on the kernel having been entered at EL2,
+    # which is the firmware's decision and is not reported in /proc/cpuinfo at
+    # all. The honest signal on arm64 is whether the kernel exposed /dev/kvm,
+    # which it does independently of the packages installed below.
+    - name: KVM | Check for the virtualization cpu flag (x86)
       ansible.builtin.command: grep -Ecm1 '(vmx|svm)' /proc/cpuinfo
       register: kvm_flags
       changed_when: false
       failed_when: false
+      when:
+        - install_kvm | bool
+        - deb_arch == 'amd64'
+      tags: [kvm]
+
+    - name: KVM | Check for /dev/kvm (non-x86)
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: kvm_dev
+      when:
+        - install_kvm | bool
+        - deb_arch != 'amd64'
+      tags: [kvm]
+
+    - name: KVM | Record whether hardware virtualization is available
+      ansible.builtin.set_fact:
+        kvm_hw_available: >-
+          {{ (kvm_flags.rc | default(1)) == 0
+             if deb_arch == 'amd64'
+             else (kvm_dev.stat.exists | default(false)) }}
       when: install_kvm | bool
       tags: [kvm]
 
+    # Each hint is its own folded scalar rather than a multi-line literal inside
+    # the ternary: YAML keeps the newlines of a more-indented continuation line,
+    # which would print the message pre-broken across lines.
     - name: KVM | Warn if hardware virtualization is unavailable
+      vars:
+        kvm_hint:
+          amd64: >-
+            No vmx/svm flag in /proc/cpuinfo; check that virtualization is
+            enabled in firmware/BIOS.
+          other: >-
+            No /dev/kvm. On arm64 this usually means the kernel was not entered
+            at EL2, which is a firmware/bootloader decision rather than anything
+            the OS can change.
       ansible.builtin.debug:
         msg: >-
-          No vmx/svm flag in /proc/cpuinfo. Packages will still install, but
-          guests will fall back to slow software emulation. Check that
-          virtualization is enabled in firmware/BIOS.
+          {{ kvm_hint[deb_arch] | default(kvm_hint['other']) }}
+          Packages will still install, but guests will fall back to slow
+          software emulation.
       when:
         - install_kvm | bool
-        - kvm_flags.rc | default(1) != 0
+        - not (kvm_hw_available | bool)
       tags: [kvm]
 
+    # Emulator and guest firmware come from kvm_packages_by_arch; see
+    # group_vars/all.yml for why the amd64 entry names qemu-system-x86 rather
+    # than the qemu-kvm virtual package.
     - name: KVM | Install libvirt and QEMU
       ansible.builtin.apt:
-        name:
-          # Not 'qemu-kvm': that is a virtual package here, provided by both
-          # qemu-system-x86 and qemu-system-x86-hwe, and apt refuses to choose
-          # between providers ("has no installation candidate"). Name the real
-          # package. The -hwe variant tracks a newer QEMU on LTS; the plain one
-          # is the standard choice.
-          - qemu-system-x86
-          - qemu-utils
-          - libvirt-daemon-system
-          - libvirt-daemon-config-network
-          - libvirt-clients
-          - virtinst
-          - virt-manager
-          - bridge-utils
-          - ovmf
+        name: "{{ kvm_packages_common + kvm_packages_by_arch[deb_arch] }}"
         state: present
       when: install_kvm | bool
       tags: [kvm]
@@ -288,7 +337,7 @@
         uris: https://brave-browser-apt-release.s3.brave.com
         suites: [stable]
         components: [main]
-        architectures: [amd64]
+        architectures: ["{{ deb_arch }}"]
         signed_by: /usr/share/keyrings/brave-browser-archive-keyring.gpg
         state: present
         enabled: true
@@ -332,7 +381,7 @@
         uris: https://dl.google.com/linux/chrome/deb/
         suites: [stable]
         components: [main]
-        architectures: [amd64]
+        architectures: ["{{ deb_arch }}"]
         signed_by: /etc/apt/keyrings/google-chrome.asc
         state: present
         enabled: true
@@ -391,7 +440,7 @@
         uris: https://packages.microsoft.com/repos/code
         suites: [stable]
         components: [main]
-        architectures: [amd64]
+        architectures: ["{{ deb_arch }}"]
         signed_by: /etc/apt/keyrings/microsoft.asc
         state: present
         enabled: true
@@ -432,7 +481,7 @@
         uris: https://download.vscodium.com/debs
         suites: [vscodium]
         components: [main]
-        architectures: [amd64]
+        architectures: ["{{ deb_arch }}"]
         signed_by: /etc/apt/keyrings/vscodium.asc
         state: present
         enabled: true
@@ -466,6 +515,10 @@
         uris: "https://downloads.claude.ai/claude-code/apt/{{ claude_code_channel }}"
         suites: ["{{ claude_code_channel }}"]
         components: [main]
+        # Pinned like the other repos: left unset, apt queries this repo for
+        # every foreign architecture dpkg has enabled (i386 is common, from
+        # Steam or Wine) and hard-fails on the missing index.
+        architectures: ["{{ deb_arch }}"]
         signed_by: /etc/apt/keyrings/claude-code.asc
         state: present
         enabled: true

@@ -3,6 +3,17 @@
 # (Claude Code / OpenCode install into this user's home, not root's).
 target_user: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"
 
+# --- Architecture ----------------------------------------------------------
+# dpkg architectures this playbook is known to work on. Every third-party repo
+# it configures — Docker, Brave, Chrome, VS Code, VSCodium, Claude Code — has a
+# published index for both, so nothing is silently skipped on either one.
+#
+# The playbook resolves the running machine's architecture with
+# `dpkg --print-architecture` and asserts it appears here. Widening this list
+# is not enough on its own: an unlisted arch will get repos whose indices 404,
+# and the assert is what stops that before the machine is half-configured.
+supported_deb_architectures: [amd64, arm64]
+
 # --- Feature toggles -------------------------------------------------------
 install_docker: true
 install_kvm: true
@@ -26,6 +37,33 @@ docker_add_user_to_group: true
 # before installing Docker CE. Off by default because it removes packages you
 # may not expect; Docker's own docs recommend it for a clean install.
 docker_purge_distro_packages: false
+
+# --- KVM -------------------------------------------------------------------
+# The QEMU system emulator and the guest UEFI firmware are the only pieces of
+# the virtualization stack that are specific to the host architecture; libvirt
+# and the tooling around it are the same everywhere.
+kvm_packages_common:
+  - qemu-utils
+  - libvirt-daemon-system
+  - libvirt-daemon-config-network
+  - libvirt-clients
+  - virtinst
+  - virt-manager
+  - bridge-utils
+
+# Keyed by dpkg architecture, so adding a platform means adding a key here.
+#
+# Not 'qemu-kvm' for the amd64 emulator: that is a virtual package, provided by
+# both qemu-system-x86 and qemu-system-x86-hwe, and apt refuses to choose
+# between providers ("has no installation candidate"). Name the real package.
+# The -hwe variant tracks a newer QEMU on LTS; the plain one is standard.
+kvm_packages_by_arch:
+  amd64:
+    - qemu-system-x86
+    - ovmf              # x86 guest UEFI firmware
+  arm64:
+    - qemu-system-arm   # provides qemu-system-aarch64
+    - qemu-efi-aarch64  # AAVMF, the arm64 guest UEFI firmware
 
 # --- Claude Code -----------------------------------------------------------
 # 'apt'    -> signed Anthropic apt repo, system-wide, updates via apt upgrade.

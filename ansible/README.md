@@ -1,6 +1,8 @@
 # Workstation provisioning
 
-Ansible playbook for Ubuntu 26.04 (resolute) / amd64. Uses `ansible.builtin` modules only — no Galaxy collections to install.
+Ansible playbook for Ubuntu 26.04 (resolute) on **amd64 (x86_64) or arm64 (aarch64)**. Uses `ansible.builtin` modules only — no Galaxy collections to install.
+
+The same set of software installs on both: every third-party repo used here publishes an arm64 index, so nothing is skipped or substituted depending on the machine. See [Architecture](#architecture) for what varies.
 
 ## Installs
 
@@ -16,6 +18,23 @@ Ansible playbook for Ubuntu 26.04 (resolute) / amd64. Uses `ansible.builtin` mod
 | FUSE 2 (AppImage runtime) | Ubuntu archive |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
+
+## Architecture
+
+The playbook resolves the target's architecture with `dpkg --print-architecture` and asserts it appears in `supported_deb_architectures` (`amd64`, `arm64`) before touching anything. It uses that value — not `ansible_architecture` — because apt names architectures `amd64`/`arm64` while the kernel says `x86_64`/`aarch64`, and the two only agree by coincidence.
+
+Everything the playbook installs is available on both. Two things differ:
+
+| | amd64 | arm64 |
+|---|---|---|
+| Apt repo pins | `Architectures: amd64` | `Architectures: arm64` |
+| QEMU emulator | `qemu-system-x86` | `qemu-system-arm` |
+| Guest UEFI firmware | `ovmf` | `qemu-efi-aarch64` (AAVMF) |
+| Virtualization probe | `vmx`/`svm` in `/proc/cpuinfo` | presence of `/dev/kvm` |
+
+The KVM package split lives in `kvm_packages_common` / `kvm_packages_by_arch` in `group_vars/all.yml`; adding a platform means adding a key there and to `supported_deb_architectures`.
+
+The virtualization probe differs because arm64 has no CPU flag for it. KVM on arm64 depends on the kernel having been entered at EL2, which the firmware decides and which `/proc/cpuinfo` does not report — so `/dev/kvm` is the only honest signal. Either way a missing capability is a warning, not a failure: packages still install and guests fall back to software emulation.
 
 ## Bootstrap a fresh machine
 
@@ -83,3 +102,5 @@ ansible-playbook site.yml -K -e claude_code_install_method=apt
 - **Claude Code** defaults to `native` (`~/.local/bin/claude`, self-updating) because that matches the existing install on this box. The `apt` method installs system-wide to `/usr/bin` and updates via `apt upgrade` — but `~/.local/bin` usually precedes `/usr/bin` in `PATH`, so remove the native install first (`rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude`) or you'll have two.
 - **FUSE 2** is what AppImages need to mount themselves; without it they exit on `dlopen(): error loading libfuse.so.2`. Nothing else pulls it in now that the archive has moved to FUSE 3. The package is `libfuse2t64` on Ubuntu 24.04+ and `libfuse2` before that (the 64-bit `time_t` rename); the playbook probes for the right one rather than guessing from the release number.
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.
+- **Apt sources pin an architecture explicitly.** Without a pin, apt queries each third-party repo for every foreign architecture `dpkg` has enabled — `i386` is commonly enabled by Steam or Wine — and hard-fails on the index it doesn't find.
+- **Claude Code and OpenCode install via upstream scripts** that detect the architecture themselves, so the `native` path needs nothing arch-specific from the playbook.
