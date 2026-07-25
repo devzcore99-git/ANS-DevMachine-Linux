@@ -26,6 +26,7 @@ install_git: true
 install_appimage_support: true
 install_claude_code: true
 install_opencode: true
+install_tailscale: true
 
 # --- Docker ----------------------------------------------------------------
 # Adds target_user to the 'docker' group. This grants effective root on the
@@ -64,6 +65,28 @@ kvm_packages_by_arch:
   arm64:
     - qemu-system-arm   # provides qemu-system-aarch64
     - qemu-efi-aarch64  # AAVMF, the arm64 guest UEFI firmware
+
+# --- Tailscale -------------------------------------------------------------
+# Unlike every other repo here, Tailscale's URL embeds the distro *and* its
+# codename: pkgs.tailscale.com/stable/<distribution>/<suite>. Derivatives break
+# that, because they report their own codename — Mint 22 is Ubuntu 24.04 but
+# says 'wilma', and there is no wilma repo. On such a system name the upstream
+# release instead:
+#   -e tailscale_repo_distribution=ubuntu -e tailscale_repo_suite=noble
+tailscale_repo_distribution: "{{ ansible_distribution | lower }}"
+tailscale_repo_suite: "{{ ansible_distribution_release }}"
+
+# Left empty, the playbook installs and starts tailscaled but does not join a
+# tailnet — `tailscale up` without a key waits on an interactive browser login,
+# which would hang the run. Connect afterwards with `sudo tailscale up`.
+#
+# To join unattended, pass a key at runtime rather than committing one here:
+#   ansible-playbook site.yml -K -e tailscale_authkey=tskey-auth-...
+tailscale_authkey: ""
+
+# Extra flags for that `tailscale up`, e.g. "--ssh --accept-routes" or
+# "--advertise-exit-node". Ignored unless tailscale_authkey is set.
+tailscale_up_args: ""
 
 # --- Claude Code -----------------------------------------------------------
 # 'apt'    -> signed Anthropic apt repo, system-wide, updates via apt upgrade.

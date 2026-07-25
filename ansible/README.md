@@ -16,6 +16,7 @@ The same set of software installs on both: every third-party repo used here publ
 | VSCodium | `download.vscodium.com/debs` |
 | btop, Git | Ubuntu archive |
 | FUSE 2 (AppImage runtime) | Ubuntu archive |
+| Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
 
@@ -76,7 +77,7 @@ Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the curre
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `appimage`, `ai`, `claude`, `opencode`, plus groups `base`, `browsers`, `editors`.
+Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `tailscale`, plus groups `base`, `browsers`, `editors`, `network`.
 
 ```bash
 ansible-playbook site.yml -K --tags docker,kvm
@@ -101,3 +102,5 @@ ansible-playbook site.yml -K -e claude_code_install_method=apt
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.
 - **Apt sources pin an architecture explicitly.** Without a pin, apt queries each third-party repo for every foreign architecture `dpkg` has enabled — `i386` is commonly enabled by Steam or Wine — and hard-fails on the index it doesn't find.
 - **Claude Code and OpenCode install via upstream scripts** that detect the architecture themselves, so the `native` path needs nothing arch-specific from the playbook.
+- **Tailscale installs and starts `tailscaled`, but does not join a tailnet.** Bare `tailscale up` blocks on an interactive browser login, which would hang an unattended run — connect afterwards with `sudo tailscale up`. To join during provisioning, pass a key on the command line rather than committing one: `ansible-playbook site.yml -K -e tailscale_authkey=tskey-auth-...` (add flags via `tailscale_up_args`, e.g. `--ssh --advertise-exit-node`). The task is skipped when the node is already `Running`, and runs `no_log` so the key stays out of the output.
+- **Tailscale's repo URL contains the distro name and codename** (`stable/ubuntu/noble`), unlike the other repos here, which serve one URI for all releases. Derivatives report their own codename — Mint 22 *is* Ubuntu 24.04 but says `wilma` — and there is no repo for it, so on those set `tailscale_repo_distribution` / `tailscale_repo_suite` to the upstream release.

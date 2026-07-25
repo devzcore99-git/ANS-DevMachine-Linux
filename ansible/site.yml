@@ -305,6 +305,93 @@
         - not (kvm_autostart.stat.exists | default(true))
       tags: [kvm]
 
+    # ------------------------------------------------------------- tailscale
+    # Tailscale's published instructions install a legacy .list whose Signed-By
+    # points at /usr/share/keyrings/tailscale-archive-keyring.gpg. Adopt that
+    # exact path rather than /etc/apt/keyrings: a .sources naming a different
+    # keyring for the same URI is the "Conflicting values set for option
+    # Signed-By" hard failure the Brave block below works around. The .list is
+    # then removed so the two never coexist.
+    #
+    # The repo URL embeds both the distro name and its codename, so unlike the
+    # other repos here there is no single URI that works everywhere — see
+    # tailscale_repo_distribution in group_vars/all.yml.
+    - name: Tailscale | Fetch signing key
+      ansible.builtin.get_url:
+        url: >-
+          https://pkgs.tailscale.com/stable/{{ tailscale_repo_distribution }}/{{ tailscale_repo_suite }}.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+      when: install_tailscale | bool
+      tags: [network, tailscale]
+
+    - name: Tailscale | Drop legacy source from the upstream instructions
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/tailscale.list
+        state: absent
+      when: install_tailscale | bool
+      tags: [network, tailscale]
+
+    - name: Tailscale | Configure apt repository
+      ansible.builtin.deb822_repository:
+        name: tailscale
+        types: [deb]
+        uris: "https://pkgs.tailscale.com/stable/{{ tailscale_repo_distribution }}"
+        suites: ["{{ tailscale_repo_suite }}"]
+        components: [main]
+        architectures: ["{{ deb_arch }}"]
+        signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        state: present
+        enabled: true
+      register: tailscale_repo
+      when: install_tailscale | bool
+      tags: [network, tailscale]
+
+    - name: Tailscale | Install
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: "{{ tailscale_repo.changed | default(false) }}"
+      when: install_tailscale | bool
+      tags: [network, tailscale]
+
+    - name: Tailscale | Enable and start tailscaled
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: started
+        enabled: true
+      when: install_tailscale | bool
+      tags: [network, tailscale]
+
+    # Joining a tailnet is deliberately left to the operator: `tailscale up`
+    # without a key opens a browser for interactive login, which would hang a
+    # provisioning run. Set tailscale_authkey to join unattended.
+    - name: Tailscale | Check whether the node is already connected
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_status
+      changed_when: false
+      # Exits non-zero when logged out, which is a state to read, not an error.
+      failed_when: false
+      when:
+        - install_tailscale | bool
+        - tailscale_authkey | length > 0
+      tags: [network, tailscale]
+
+    # The two-argument default() also substitutes on an *empty* stdout, which
+    # is what the probe above returns when it fails; from_json would raise on
+    # the empty string.
+    - name: Tailscale | Join the tailnet with an auth key
+      ansible.builtin.command: >-
+        tailscale up --auth-key {{ tailscale_authkey }} {{ tailscale_up_args }}
+      register: tailscale_up
+      changed_when: tailscale_up.rc == 0
+      when:
+        - install_tailscale | bool
+        - tailscale_authkey | length > 0
+        - (tailscale_status.stdout | default('{}', true) | from_json).BackendState | default('') != 'Running'
+      no_log: true
+      tags: [network, tailscale]
+
     # ----------------------------------------------------------------- brave
     # The brave-browser package ships its own deb822 source at
     # brave-browser-release.sources, with Signed-By pointing into
@@ -580,3 +667,6 @@
           - "Docker/KVM group membership does not apply to existing sessions."
           - "Log out and back in (or run: newgrp docker) before using docker without sudo."
           - "Authenticate Claude Code by running: claude"
+          - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
+                if (install_tailscale | bool) and (tailscale_authkey | length == 0)
+                else 'Tailscale: connected (or an auth key was supplied).' }}"
