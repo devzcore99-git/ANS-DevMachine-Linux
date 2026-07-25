@@ -69,10 +69,10 @@ To run the playbook directly, without `bootstrap.sh`:
 
 ```bash
 cd ansible          # from the root of this repository
-ansible-playbook site.yml -K
+ansible-playbook site.yml
 ```
 
-`-K` prompts for the sudo password. Dry run first with `--check --diff`.
+No flags needed: `ansible.cfg` sets `become_ask_pass`, so it prompts for the sudo password on its own. `-K` is harmless if you're used to typing it. Dry run first with `--check --diff`.
 
 Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the current directory, never from the playbook's, and this one sets the inventory — run `ansible-playbook ansible/site.yml` from the repo root and the inventory is never loaded, so `hosts: workstation` matches nothing and the play is skipped with no error.
 
@@ -97,7 +97,7 @@ Two things keep the default-on menu from breaking unattended use: `-y` turns it 
 The answers are written to `selection.local.yml` beside the playbook and passed with `-e`, which outranks `group_vars`. That file is the point: the second run needs no menu at all.
 
 ```bash
-ansible-playbook site.yml -K -e @selection.local.yml
+ansible-playbook site.yml -e @selection.local.yml
 ```
 
 Keep per-machine variants, edit it by hand, or delete it to fall back to the defaults. It's gitignored — `group_vars/all.yml` holds the project's defaults, `selection.local.yml` holds one machine's choices.
@@ -107,20 +107,21 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `tailscale`, plus groups `base`, `browsers`, `editors`, `network`.
 
 ```bash
-ansible-playbook site.yml -K --tags docker,kvm
-ansible-playbook site.yml -K --skip-tags ai
+ansible-playbook site.yml --tags docker,kvm
+ansible-playbook site.yml --skip-tags ai
 ```
 
 Toggles and defaults live in `group_vars/all.yml`; override per-run with `-e`:
 
 ```bash
-ansible-playbook site.yml -K -e install_chrome=false
-ansible-playbook site.yml -K -e claude_code_install_method=apt
+ansible-playbook site.yml -e install_chrome=false
+ansible-playbook site.yml -e claude_code_install_method=apt
 ```
 
 ## Notes
 
 - **Repos are deb822 `.sources`**, not legacy `.list`. Chrome and VS Code packages try to re-register their own `.list` file; the playbook opts out via `/etc/default/*` and deletes any duplicate that appears.
+- **One password prompt, not two.** `ansible.cfg` sets `become_ask_pass = True` so a bare `ansible-playbook site.yml` asks for the sudo password — the standalone run is correct with no flags, rather than failing every task on `sudo: a password is required` with no hint that `-K` was the fix. `bootstrap.sh` has already authenticated by the time it reaches the playbook, so it suppresses that prompt with `ANSIBLE_BECOME_ASK_PASS=False` — but only after re-testing that the credential is still cached, falling back to prompting if it expired. It also escalates with the *same* binary the playbook uses (see below) and refreshes the timestamp in the background, since sudo and sudo-rs keep separate credential caches and a task longer than `timestamp_timeout` would otherwise strand the next one.
 - **Privilege escalation adapts to the release.** Ubuntu 25.10+ puts sudo-rs behind `/usr/bin/sudo`; it ignores the custom prompt Ansible passes with `-p`, so Ansible never matches its own prompt and every task — including `Gathering Facts` — dies with *"Timed out waiting for become success or become password prompt"*. `ansible_become_exe` in `group_vars/all.yml` probes for classic sudo at `/usr/bin/sudo.ws` and falls back to plain `sudo` on 24.04 and earlier, where that path doesn't exist. The probe reads the **control** node's filesystem, which is the target only because the inventory is `localhost ansible_connection=local` — if you repoint it at remote hosts, set the value per-host in the inventory or pass `-e ansible_become_exe=...`.
 - **`docker_add_user_to_group: true`** puts you in the `docker` group, which is effectively root on this host. Set it to `false` to keep Docker sudo-only.
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
@@ -130,5 +131,5 @@ ansible-playbook site.yml -K -e claude_code_install_method=apt
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.
 - **Apt sources pin an architecture explicitly.** Without a pin, apt queries each third-party repo for every foreign architecture `dpkg` has enabled — `i386` is commonly enabled by Steam or Wine — and hard-fails on the index it doesn't find.
 - **Claude Code and OpenCode install via upstream scripts** that detect the architecture themselves, so the `native` path needs nothing arch-specific from the playbook.
-- **Tailscale installs and starts `tailscaled`, but does not join a tailnet.** Bare `tailscale up` blocks on an interactive browser login, which would hang an unattended run — connect afterwards with `sudo tailscale up`. To join during provisioning, pass a key on the command line rather than committing one: `ansible-playbook site.yml -K -e tailscale_authkey=tskey-auth-...` (add flags via `tailscale_up_args`, e.g. `--ssh --advertise-exit-node`). The task is skipped when the node is already `Running`, and runs `no_log` so the key stays out of the output.
+- **Tailscale installs and starts `tailscaled`, but does not join a tailnet.** Bare `tailscale up` blocks on an interactive browser login, which would hang an unattended run — connect afterwards with `sudo tailscale up`. To join during provisioning, pass a key on the command line rather than committing one: `ansible-playbook site.yml -e tailscale_authkey=tskey-auth-...` (add flags via `tailscale_up_args`, e.g. `--ssh --advertise-exit-node`). The task is skipped when the node is already `Running`, and runs `no_log` so the key stays out of the output.
 - **Tailscale's repo URL contains the distro name and codename** (`stable/ubuntu/noble`), unlike the other repos here, which serve one URI for all releases. Derivatives report their own codename — Mint 22 *is* Ubuntu 24.04 but says `wilma` — and there is no repo for it, so on those set `tailscale_repo_distribution` / `tailscale_repo_suite` to the upstream release.
