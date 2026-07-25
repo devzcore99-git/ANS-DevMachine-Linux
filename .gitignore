@@ -1,0 +1,49 @@
+# --- OS cruft ---------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# --- Editors ----------------------------------------------------------------
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# --- Ansible ----------------------------------------------------------------
+# Written next to the playbook on a partial failure; regenerated every run.
+*.retry
+
+# Fact cache / log destinations, if ever enabled in ansible.cfg.
+ansible.log
+facts.d/
+
+# Vault password files. Never commit these — the name is a convention, not a
+# guarantee, so this is a backstop rather than the reason it is safe.
+.vault_pass
+.vault_pass.txt
+vault-password*
+
+# Local inventory and variable overrides. inventory.ini itself IS tracked; these
+# are the per-machine variants that should stay on the machine.
+inventory.local
+inventory.*.local
+host_vars/
+group_vars/*.local.yml
+
+# Collections/roles pulled in by ansible-galaxy. The playbook deliberately uses
+# ansible.builtin only, so these should stay empty — ignored in case that ever
+# changes.
+collections/
+roles/galaxy/
+
+# --- Secrets ----------------------------------------------------------------
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.env
