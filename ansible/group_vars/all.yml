@@ -3,6 +3,29 @@
 # (Claude Code / OpenCode install into this user's home, not root's).
 target_user: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"
 
+# --- Privilege escalation --------------------------------------------------
+# Ubuntu 25.10+ makes sudo-rs the default behind /usr/bin/sudo. It ignores the
+# custom prompt Ansible passes with -p, wrapping it as
+#   [sudo: <ansible prompt>] Password:
+# so Ansible never matches its own prompt and every task — including Gathering
+# Facts, since this play sets become at play level — dies with "Timed out
+# waiting for become success or become password prompt".
+#
+# There, classic sudo is still installed as /usr/bin/sudo.ws
+# (update-alternatives, priority 40). Point become at it directly rather than
+# switching the system alternative, so nothing outside Ansible changes
+# behaviour. On 24.04 and earlier that path does not exist and plain sudo is
+# correct — hence the probe rather than a fixed value in ansible.cfg, which
+# has no way to express a conditional.
+#
+# CAVEAT: `is exists` tests the *control* node's filesystem, which is only the
+# same machine as the target because inventory.ini is
+# `localhost ansible_connection=local`. If you repoint the inventory at remote
+# hosts, this will probe the wrong box — set it per-host in the inventory, or
+# override at runtime:
+#   ansible-playbook site.yml -K -e ansible_become_exe=/usr/bin/sudo.ws
+ansible_become_exe: "{{ '/usr/bin/sudo.ws' if '/usr/bin/sudo.ws' is exists else 'sudo' }}"
+
 # --- Architecture ----------------------------------------------------------
 # dpkg architectures this playbook is known to work on. Every third-party repo
 # it configures — Docker, Brave, Chrome, VS Code, VSCodium, Claude Code — has a

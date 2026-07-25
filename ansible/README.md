@@ -1,6 +1,6 @@
 # Workstation provisioning
 
-Ansible playbook for Ubuntu 26.04 (resolute) on **amd64 (x86_64) or arm64 (aarch64)**. Uses `ansible.builtin` modules only — no Galaxy collections to install.
+Ansible playbook for Ubuntu 24.04 (noble) through 26.04 (resolute) on **amd64 (x86_64) or arm64 (aarch64)**. Uses `ansible.builtin` modules only — no Galaxy collections to install.
 
 The same set of software installs on both: every third-party repo used here publishes an arm64 index, so nothing is skipped or substituted depending on the machine. See [Architecture](#architecture) for what varies.
 
@@ -73,7 +73,7 @@ ansible-playbook site.yml -K
 
 `-K` prompts for the sudo password. Dry run first with `--check --diff`.
 
-Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the current directory, never from the playbook's, and this one sets `become_exe` and the inventory — pointing at `ansible/site.yml` from elsewhere silently skips all of it.
+Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the current directory, never from the playbook's, and this one sets the inventory — run `ansible-playbook ansible/site.yml` from the repo root and the inventory is never loaded, so `hosts: workstation` matches nothing and the play is skipped with no error.
 
 ## Selective runs
 
@@ -94,6 +94,7 @@ ansible-playbook site.yml -K -e claude_code_install_method=apt
 ## Notes
 
 - **Repos are deb822 `.sources`**, not legacy `.list`. Chrome and VS Code packages try to re-register their own `.list` file; the playbook opts out via `/etc/default/*` and deletes any duplicate that appears.
+- **Privilege escalation adapts to the release.** Ubuntu 25.10+ puts sudo-rs behind `/usr/bin/sudo`; it ignores the custom prompt Ansible passes with `-p`, so Ansible never matches its own prompt and every task — including `Gathering Facts` — dies with *"Timed out waiting for become success or become password prompt"*. `ansible_become_exe` in `group_vars/all.yml` probes for classic sudo at `/usr/bin/sudo.ws` and falls back to plain `sudo` on 24.04 and earlier, where that path doesn't exist. The probe reads the **control** node's filesystem, which is the target only because the inventory is `localhost ansible_connection=local` — if you repoint it at remote hosts, set the value per-host in the inventory or pass `-e ansible_become_exe=...`.
 - **`docker_add_user_to_group: true`** puts you in the `docker` group, which is effectively root on this host. Set it to `false` to keep Docker sudo-only.
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
 - **`docker_purge_distro_packages`** defaults to `false`. Set it to `true` only if you want `docker.io`/`podman-docker`/`containerd` removed first.
