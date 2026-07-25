@@ -35,6 +35,10 @@ inventory.*.local
 host_vars/
 group_vars/*.local.yml
 
+# Component selections written by `bootstrap.sh -m`. These describe one machine's
+# choices, not the project's defaults — those live in group_vars/all.yml.
+*.local.yml
+
 # Collections/roles pulled in by ansible-galaxy. The playbook deliberately uses
 # ansible.builtin only, so these should stay empty — ignored in case that ever
 # changes.

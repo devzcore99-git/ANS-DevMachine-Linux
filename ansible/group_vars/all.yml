@@ -38,18 +38,24 @@ ansible_become_exe: "{{ '/usr/bin/sudo.ws' if '/usr/bin/sudo.ws' is exists else 
 supported_deb_architectures: [amd64, arm64]
 
 # --- Feature toggles -------------------------------------------------------
-install_docker: true
-install_kvm: true
-install_brave: true
-install_chrome: true
-install_vscode: true
-install_codium: true
-install_btop: true
-install_git: true
-install_appimage_support: true
-install_claude_code: true
-install_opencode: true
-install_tailscale: true
+# The `##` marker is not an ordinary comment: `bootstrap.sh -m` parses these
+# lines to build its checklist, taking the name, the default state and the text
+# after `##` as the menu label. Keep the marker on the same line as the toggle.
+#
+# A toggle without a `##` label still works — it just won't be offered in the
+# menu, so anything meant to be switchable interactively needs one.
+install_docker: true              ## Docker CE + compose & buildx plugins
+install_kvm: true                 ## KVM — qemu, libvirt, virt-manager
+install_brave: true               ## Brave browser
+install_chrome: true              ## Google Chrome
+install_vscode: true              ## Visual Studio Code
+install_codium: true              ## VSCodium
+install_btop: true                ## btop resource monitor
+install_git: true                 ## Git
+install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
+install_claude_code: true         ## Claude Code
+install_opencode: true            ## OpenCode
+install_tailscale: true           ## Tailscale VPN
 
 # --- Docker ----------------------------------------------------------------
 # Adds target_user to the 'docker' group. This grants effective root on the

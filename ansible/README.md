@@ -42,13 +42,14 @@ The virtualization probe differs because arm64 has no CPU flag for it. KVM on ar
 Get this repository onto the machine yourself — `git clone`, a downloaded zip, `scp`, a USB stick, whatever suits. Then run `bootstrap.sh` from it:
 
 ```bash
-./bootstrap.sh        # install prerequisites, then offer to run site.yml
-./bootstrap.sh -y     # don't prompt, just run it
+./bootstrap.sh        # choose components, then offer to run site.yml
+./bootstrap.sh -s     # skip the menu, install the defaults
+./bootstrap.sh -y     # don't prompt at all (implies -s)
 ./bootstrap.sh -n     # prerequisites only, don't run the playbook
 ./bootstrap.sh -p x.yml
 ```
 
-Flags: `-p` playbook name, `-n` no run, `-y` no prompt, `-h` help.
+Flags: `-s` skip menu, `-p` playbook name, `-n` no run, `-y` no prompt, `-h` help.
 
 The script installs `git`, `ansible-core` and `curl` if they're missing, warns if `ansible-core` is older than 2.15, then runs the playbook. **It fetches nothing from GitHub** and needs no authentication — it locates the playbook relative to its own path, so an unpacked archive works exactly like a checkout. It resolves symlinks on the way, so it also works symlinked onto your `PATH`.
 
@@ -74,6 +75,32 @@ ansible-playbook site.yml -K
 `-K` prompts for the sudo password. Dry run first with `--check --diff`.
 
 Run it from the `ansible/` directory. Ansible reads `ansible.cfg` from the current directory, never from the playbook's, and this one sets the inventory — run `ansible-playbook ansible/site.yml` from the repo root and the inventory is never loaded, so `hosts: workstation` matches nothing and the play is skipped with no error.
+
+## Choosing components interactively
+
+`./bootstrap.sh` shows a checklist of everything the playbook can install, pre-ticked with the current defaults. Untick what you don't want, confirm, and it runs with just those. This is the default; `-s` skips it and installs the defaults straight through.
+
+Re-running starts from your **previous** answers rather than the project defaults, so changing one thing doesn't mean re-ticking eleven others. Only keys actually present in the saved file are applied — a component added to the playbook since you last chose keeps its default instead of being silently dropped.
+
+The list is **generated from the `install_*` toggles in `group_vars/all.yml`**, not from a copy kept in the script — a toggle appears in the menu if it carries a `## label` marker on the same line:
+
+```yaml
+install_docker: true              ## Docker CE + compose & buildx plugins
+```
+
+So adding a component to the playbook adds it to the menu. Adding one *without* a `## label` is the only way to get a toggle that the menu can't reach, which is occasionally what you want.
+
+It uses `whiptail` (already present on Debian/Ubuntu — debconf depends on it) and falls back to a plain numbered toggle list if it's missing.
+
+Two things keep the default-on menu from breaking unattended use: `-y` turns it off along with the run confirmation, and with no terminal on stdin — a pipe, cron, CI — it's skipped automatically and the defaults apply.
+
+The answers are written to `selection.local.yml` beside the playbook and passed with `-e`, which outranks `group_vars`. That file is the point: the second run needs no menu at all.
+
+```bash
+ansible-playbook site.yml -K -e @selection.local.yml
+```
+
+Keep per-machine variants, edit it by hand, or delete it to fall back to the defaults. It's gitignored — `group_vars/all.yml` holds the project's defaults, `selection.local.yml` holds one machine's choices.
 
 ## Selective runs
 
