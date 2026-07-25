@@ -61,6 +61,33 @@
       when: install_btop | bool
       tags: [base, btop]
 
+    # -------------------------------------------------------------- appimage
+    # AppImages (LM Studio, Cursor, ...) dlopen libfuse.so.2 on startup and
+    # abort with "dlopen(): error loading libfuse.so.2" when it is missing —
+    # nothing pulls it in by default since the archive moved to FUSE 3.
+    #
+    # Ubuntu's 64-bit time_t transition renamed libfuse2 -> libfuse2t64 in
+    # 24.04, so the name depends on the release. Probe the cache rather than
+    # branch on ansible_distribution_version: those numbers are not comparable
+    # across the derivatives this may run on (Mint 22 *is* Ubuntu 24.04, but
+    # reports 22). The pre_tasks apt update above makes the cache current.
+    - name: AppImage | Detect FUSE 2 package name
+      ansible.builtin.command: apt-cache policy libfuse2t64
+      register: fuse2t64_policy
+      changed_when: false
+      failed_when: false
+      when: install_appimage_support | bool
+      tags: [base, appimage]
+
+    # apt-cache policy exits 0 with empty stdout for an unknown package, so
+    # presence of output — not rc — is the signal.
+    - name: AppImage | Install FUSE 2 runtime
+      ansible.builtin.apt:
+        name: "{{ 'libfuse2t64' if (fuse2t64_policy.stdout | default('') | trim | length > 0) else 'libfuse2' }}"
+        state: present
+      when: install_appimage_support | bool
+      tags: [base, appimage]
+
     # ---------------------------------------------------------------- docker
     - name: Docker | Purge distro-packaged versions
       ansible.builtin.apt:

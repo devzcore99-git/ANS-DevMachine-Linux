@@ -13,6 +13,7 @@ Ansible playbook for Ubuntu 26.04 (resolute) / amd64. Uses `ansible.builtin` mod
 | VS Code | `packages.microsoft.com/repos/code` |
 | VSCodium | `download.vscodium.com/debs` |
 | btop, Git | Ubuntu archive |
+| FUSE 2 (AppImage runtime) | Ubuntu archive |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
 
@@ -59,7 +60,7 @@ ansible-playbook site.yml -K
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `ai`, `claude`, `opencode`, plus groups `base`, `browsers`, `editors`.
+Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `appimage`, `ai`, `claude`, `opencode`, plus groups `base`, `browsers`, `editors`.
 
 ```bash
 ansible-playbook site.yml -K --tags docker,kvm
@@ -80,4 +81,5 @@ ansible-playbook site.yml -K -e claude_code_install_method=apt
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
 - **`docker_purge_distro_packages`** defaults to `false`. Set it to `true` only if you want `docker.io`/`podman-docker`/`containerd` removed first.
 - **Claude Code** defaults to `native` (`~/.local/bin/claude`, self-updating) because that matches the existing install on this box. The `apt` method installs system-wide to `/usr/bin` and updates via `apt upgrade` — but `~/.local/bin` usually precedes `/usr/bin` in `PATH`, so remove the native install first (`rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude`) or you'll have two.
+- **FUSE 2** is what AppImages need to mount themselves; without it they exit on `dlopen(): error loading libfuse.so.2`. Nothing else pulls it in now that the archive has moved to FUSE 3. The package is `libfuse2t64` on Ubuntu 24.04+ and `libfuse2` before that (the 64-bit `time_t` rename); the playbook probes for the right one rather than guessing from the release number.
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.

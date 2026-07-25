@@ -12,6 +12,7 @@ install_vscode: true
 install_codium: true
 install_btop: true
 install_git: true
+install_appimage_support: true
 install_claude_code: true
 install_opencode: true
 
