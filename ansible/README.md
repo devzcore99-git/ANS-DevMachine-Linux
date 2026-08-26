@@ -14,6 +14,7 @@ The same set of software installs on both: every third-party repo used here publ
 | Chrome | `dl.google.com/linux/chrome/deb` |
 | VS Code | `packages.microsoft.com/repos/code` |
 | VSCodium | `download.vscodium.com/debs` |
+| GitHub CLI (`gh`) | `cli.github.com/packages` |
 | btop, Git | Ubuntu archive |
 | FUSE 2 (AppImage runtime) | Ubuntu archive |
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
@@ -104,7 +105,7 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `tailscale`, plus groups `base`, `browsers`, `editors`, `network`.
+Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `tailscale`, plus groups `base`, `browsers`, `editors`, `network`.
 
 ```bash
 ansible-playbook site.yml --tags docker,kvm
@@ -131,6 +132,7 @@ ansible-playbook site.yml -e claude_code_install_method=apt
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
 - **`docker_purge_distro_packages`** defaults to `false`. Set it to `true` only if you want `docker.io`/`podman-docker`/`containerd` removed first.
 - **Claude Code** defaults to `native` (`~/.local/bin/claude`, self-updating) because that matches the existing install on this box. The `apt` method installs system-wide to `/usr/bin` and updates via `apt upgrade` — but `~/.local/bin` usually precedes `/usr/bin` in `PATH`, so remove the native install first (`rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude`) or you'll have two.
+- **GitHub CLI comes from GitHub's repo, not the archive.** Ubuntu ships `gh` in universe, but frozen at the release it shipped with (2.46 on resolute) and never updated, and `gh` warns about being out of date once it drifts. Its install task is the one place using `state: latest` rather than `present`: on a machine that already has the archive build, `present` would consider the package satisfied and leave the stale version in place, so adding the repo would change nothing until the next unrelated `apt upgrade`. Both are the same package name, so the higher version simply wins — no pinning involved. The keyring goes to `/usr/share/keyrings/githubcli-archive-keyring.gpg`, the path GitHub's own instructions use, for the Signed-By reason described above; any legacy `github-cli.list` left by following those instructions by hand is removed.
 - **FUSE 2** is what AppImages need to mount themselves; without it they exit on `dlopen(): error loading libfuse.so.2`. Nothing else pulls it in now that the archive has moved to FUSE 3. The package is `libfuse2t64` on Ubuntu 24.04+ and `libfuse2` before that (the 64-bit `time_t` rename); the playbook probes for the right one rather than guessing from the release number.
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.
 - **Apt sources pin an architecture explicitly.** Without a pin, apt queries each third-party repo for every foreign architecture `dpkg` has enabled — `i386` is commonly enabled by Steam or Wine — and hard-fails on the index it doesn't find.

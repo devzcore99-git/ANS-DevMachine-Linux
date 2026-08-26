@@ -28,8 +28,9 @@ ansible_become_exe: "{{ '/usr/bin/sudo.ws' if '/usr/bin/sudo.ws' is exists else 
 
 # --- Architecture ----------------------------------------------------------
 # dpkg architectures this playbook is known to work on. Every third-party repo
-# it configures — Docker, Brave, Chrome, VS Code, VSCodium, Claude Code — has a
-# published index for both, so nothing is silently skipped on either one.
+# it configures — Docker, Brave, Chrome, VS Code, VSCodium, GitHub CLI, Claude
+# Code — has a published index for both, so nothing is silently skipped on
+# either one.
 #
 # The playbook resolves the running machine's architecture with
 # `dpkg --print-architecture` and asserts it appears here. Widening this list
@@ -52,6 +53,7 @@ install_vscode: true              ## Visual Studio Code
 install_codium: true              ## VSCodium
 install_btop: true                ## btop resource monitor
 install_git: true                 ## Git
+install_gh: true                  ## GitHub CLI (gh)
 install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode

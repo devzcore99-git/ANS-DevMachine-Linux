@@ -84,6 +84,65 @@
       when: install_btop | bool
       tags: [base, btop]
 
+    # ------------------------------------------------------------ github cli
+    # The archive ships gh too, but frozen at release — 2.46 on resolute, years
+    # behind upstream — and gh warns on every invocation once it drifts. Take it
+    # from GitHub's repo like the other vendor tools here.
+    #
+    # GitHub's published instructions put the keyring at
+    # /usr/share/keyrings/githubcli-archive-keyring.gpg and write a legacy
+    # github-cli.list. Adopt that keyring path rather than /etc/apt/keyrings:
+    # a .sources naming a different keyring for the same URI is the "Conflicting
+    # values set for option Signed-By" hard failure that breaks *every* source
+    # list, not just this one. The .list is then removed so the two never
+    # coexist. Same reasoning as the Tailscale and Brave blocks below.
+    #
+    # The key is a binary keyring, not ASCII armour, hence .gpg rather than the
+    # .asc used for Docker and Chrome.
+    - name: GitHub CLI | Fetch signing key
+      ansible.builtin.get_url:
+        url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        mode: "0644"
+      when: install_gh | bool
+      tags: [base, gh]
+
+    - name: GitHub CLI | Drop legacy source from the upstream instructions
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/github-cli.list
+        state: absent
+      when: install_gh | bool
+      tags: [base, gh]
+
+    - name: GitHub CLI | Configure apt repository
+      ansible.builtin.deb822_repository:
+        name: github-cli
+        types: [deb]
+        uris: https://cli.github.com/packages
+        suites: [stable]
+        components: [main]
+        architectures: ["{{ deb_arch }}"]
+        signed_by: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        state: present
+        enabled: true
+      register: gh_repo
+      when: install_gh | bool
+      tags: [base, gh]
+
+    # 'latest' rather than the 'present' used everywhere else, because the
+    # archive may have installed gh already: apt would then consider the package
+    # satisfied and leave the stale build in place, so adding the repo above
+    # would change nothing until some unrelated `apt upgrade` came along. Both
+    # versions are the same package name, so the higher one simply wins — no
+    # pinning needed.
+    - name: GitHub CLI | Install
+      ansible.builtin.apt:
+        name: gh
+        state: latest
+        update_cache: "{{ gh_repo.changed | default(false) }}"
+      when: install_gh | bool
+      tags: [base, gh]
+
     # -------------------------------------------------------------- appimage
     # AppImages (LM Studio, Cursor, ...) dlopen libfuse.so.2 on startup and
     # abort with "dlopen(): error loading libfuse.so.2" when it is missing —
