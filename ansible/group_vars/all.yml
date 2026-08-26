@@ -57,6 +57,8 @@ install_gh: true                  ## GitHub CLI (gh)
 install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode
+install_herdr: true               ## Herdr terminal workspace manager
+install_devpod: true              ## DevPod dev-environment CLI
 install_tailscale: true           ## Tailscale VPN
 
 # --- Docker ----------------------------------------------------------------
@@ -129,3 +131,28 @@ claude_code_install_method: native
 
 # 'stable' (~1 week behind, skips known-bad releases) or 'latest'.
 claude_code_channel: stable
+
+# --- DevPod ----------------------------------------------------------------
+# DevPod ships no apt repo and no installer script: the CLI is a single static
+# Go binary published as a GitHub release asset, and upstream's documented
+# install is a curl of that asset into /usr/local/bin. It is how the copy
+# already on this box got there — byte-identical to the devpod-linux-amd64
+# asset. The CLI has no self-update either; upstream's advice for upgrading is
+# to download the newer binary over it, which is what bumping this var does.
+#
+# So the version is pinned here rather than tracked. Bump it to upgrade; the
+# playbook compares this string against `devpod version` and only downloads
+# when they differ. Check for newer with:
+#   curl -fsSL https://api.github.com/repos/loft-sh/devpod/releases/latest \
+#     | grep '"tag_name"'
+#
+# 'latest' is deliberately not accepted: the guard needs an exact version to
+# compare against, and without one every run would re-fetch 85 MB.
+devpod_version: v0.6.15
+
+# There is also a desktop app, but only for amd64 — installing it would make
+# this the one component that skips arm64. Upstream no longer builds deb or rpm
+# packages for it; the official package is now the AppImage, whose fuse2
+# runtime install_appimage_support already provides. The CLI covers
+# `devpod up`; add the GUI by hand if you want it.
+devpod_install_dir: /usr/local/bin

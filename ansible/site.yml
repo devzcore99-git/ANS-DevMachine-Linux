@@ -250,6 +250,49 @@
         - docker_add_user_to_group | bool
       tags: [docker]
 
+    # ---------------------------------------------------------------- devpod
+    # No apt repo, no distro package and no installer script: the documented
+    # Linux install is a bare one-liner,
+    #   curl -L -o devpod ".../releases/latest/download/devpod-linux-amd64" \
+    #     && sudo install -c -m 0755 devpod /usr/local/bin && rm -f devpod
+    # which is what the get_url below is — same asset, same destination, same
+    # mode, minus the temp file. Asset names are
+    # devpod-linux-<arch> using dpkg's own architecture spelling, so deb_arch
+    # drops straight in with no mapping — unlike ansible_architecture, which
+    # would say x86_64 and 404.
+    #
+    # DevPod drives containers through a provider; the default one is docker,
+    # which install_docker above provides. Nothing here enforces that pairing —
+    # DevPod also targets ssh, kubernetes and cloud providers — but with both
+    # toggles off `devpod up` has nothing local to build on.
+    #
+    # check_mode: false for the same reason as the probes above; the binary is
+    # absent on a first run, hence failed_when: false rather than a stat.
+    - name: DevPod | Check installed version
+      ansible.builtin.command: "{{ devpod_install_dir }}/devpod version"
+      register: devpod_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: install_devpod | bool
+      tags: [devpod]
+
+    # `devpod version` prints the bare tag ("v0.6.15", no trailing newline), so
+    # it compares directly against devpod_version. A mismatch covers both the
+    # missing binary (empty stdout) and an upgrade after bumping the pin.
+    - name: DevPod | Install CLI {{ devpod_version }}
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/loft-sh/devpod/releases/download/{{ devpod_version }}/devpod-linux-{{ deb_arch }}
+        dest: "{{ devpod_install_dir }}/devpod"
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - install_devpod | bool
+        - (devpod_installed.stdout | default('') | trim) != devpod_version
+      tags: [devpod]
+
     # ------------------------------------------------------------------- kvm
     # x86 advertises virtualization through the vmx/svm cpu flag. arm64 has no
     # equivalent: KVM there depends on the kernel having been entered at EL2,
@@ -729,6 +772,28 @@
         mode: "0644"
       when: install_opencode | bool
       tags: [ai, opencode]
+
+    # ----------------------------------------------------------------- herdr
+    # Same shape as the Claude Code native install: an upstream script that
+    # drops a single binary in ~/.local/bin and updates itself from then on
+    # (`herdr update`), so it runs as target_user rather than root and is
+    # guarded with creates: to keep it a one-off.
+    #
+    # No PATH task, unlike OpenCode: ~/.local/bin is what Ubuntu's stock
+    # ~/.profile already adds, and it is where claude lives too.
+    #
+    # The installer covers linux x86_64 and aarch64 — the same two the
+    # architecture assert allows — and verifies a SHA-256 from the release
+    # manifest before installing.
+    - name: Herdr | Install for {{ target_user }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: set -o pipefail && curl -fsSL https://herdr.dev/install.sh | sh
+        executable: /bin/bash
+        creates: "~/.local/bin/herdr"
+      when: install_herdr | bool
+      tags: [ai, herdr]
 
   post_tasks:
     - name: Summary
