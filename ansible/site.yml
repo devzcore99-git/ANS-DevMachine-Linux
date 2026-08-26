@@ -19,10 +19,17 @@
     # mapping between them here would be guesswork: a 32-bit userland on a
     # 64-bit kernel reports aarch64 while apt resolves armhf. Ask dpkg, which is
     # the same thing apt itself consults.
+    #
+    # check_mode: false because --check skips command tasks by default, which
+    # would leave deb_arch empty and trip the architecture assert below — the
+    # whole dry run dies at the third task, before reporting anything. Reading
+    # a value is not a change, so the probe should run either way. Same applies
+    # to every read-only probe further down, each marked the same way.
     - name: Detect dpkg architecture
       ansible.builtin.command: dpkg --print-architecture
       register: dpkg_arch_probe
       changed_when: false
+      check_mode: false
       tags: always
 
     - name: Record dpkg architecture
@@ -158,6 +165,7 @@
       register: fuse2t64_policy
       changed_when: false
       failed_when: false
+      check_mode: false
       when: install_appimage_support | bool
       tags: [base, appimage]
 
@@ -253,6 +261,7 @@
       register: kvm_flags
       changed_when: false
       failed_when: false
+      check_mode: false
       when:
         - install_kvm | bool
         - deb_arch == 'amd64'
@@ -333,6 +342,7 @@
       register: kvm_active_nets
       changed_when: false
       failed_when: false
+      check_mode: false
       when: install_kvm | bool
       tags: [kvm]
 
@@ -431,6 +441,7 @@
       changed_when: false
       # Exits non-zero when logged out, which is a state to read, not an error.
       failed_when: false
+      check_mode: false
       when:
         - install_tailscale | bool
         - tailscale_authkey | length > 0
