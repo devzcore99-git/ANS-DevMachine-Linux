@@ -19,10 +19,17 @@
     # mapping between them here would be guesswork: a 32-bit userland on a
     # 64-bit kernel reports aarch64 while apt resolves armhf. Ask dpkg, which is
     # the same thing apt itself consults.
+    #
+    # check_mode: false because --check skips command tasks by default, which
+    # would leave deb_arch empty and trip the architecture assert below — the
+    # whole dry run dies at the third task, before reporting anything. Reading
+    # a value is not a change, so the probe should run either way. Same applies
+    # to every read-only probe further down, each marked the same way.
     - name: Detect dpkg architecture
       ansible.builtin.command: dpkg --print-architecture
       register: dpkg_arch_probe
       changed_when: false
+      check_mode: false
       tags: always
 
     - name: Record dpkg architecture
@@ -84,6 +91,65 @@
       when: install_btop | bool
       tags: [base, btop]
 
+    # ------------------------------------------------------------ github cli
+    # The archive ships gh too, but frozen at release — 2.46 on resolute, years
+    # behind upstream — and gh warns on every invocation once it drifts. Take it
+    # from GitHub's repo like the other vendor tools here.
+    #
+    # GitHub's published instructions put the keyring at
+    # /usr/share/keyrings/githubcli-archive-keyring.gpg and write a legacy
+    # github-cli.list. Adopt that keyring path rather than /etc/apt/keyrings:
+    # a .sources naming a different keyring for the same URI is the "Conflicting
+    # values set for option Signed-By" hard failure that breaks *every* source
+    # list, not just this one. The .list is then removed so the two never
+    # coexist. Same reasoning as the Tailscale and Brave blocks below.
+    #
+    # The key is a binary keyring, not ASCII armour, hence .gpg rather than the
+    # .asc used for Docker and Chrome.
+    - name: GitHub CLI | Fetch signing key
+      ansible.builtin.get_url:
+        url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        mode: "0644"
+      when: install_gh | bool
+      tags: [base, gh]
+
+    - name: GitHub CLI | Drop legacy source from the upstream instructions
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/github-cli.list
+        state: absent
+      when: install_gh | bool
+      tags: [base, gh]
+
+    - name: GitHub CLI | Configure apt repository
+      ansible.builtin.deb822_repository:
+        name: github-cli
+        types: [deb]
+        uris: https://cli.github.com/packages
+        suites: [stable]
+        components: [main]
+        architectures: ["{{ deb_arch }}"]
+        signed_by: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        state: present
+        enabled: true
+      register: gh_repo
+      when: install_gh | bool
+      tags: [base, gh]
+
+    # 'latest' rather than the 'present' used everywhere else, because the
+    # archive may have installed gh already: apt would then consider the package
+    # satisfied and leave the stale build in place, so adding the repo above
+    # would change nothing until some unrelated `apt upgrade` came along. Both
+    # versions are the same package name, so the higher one simply wins — no
+    # pinning needed.
+    - name: GitHub CLI | Install
+      ansible.builtin.apt:
+        name: gh
+        state: latest
+        update_cache: "{{ gh_repo.changed | default(false) }}"
+      when: install_gh | bool
+      tags: [base, gh]
+
     # -------------------------------------------------------------- appimage
     # AppImages (LM Studio, Cursor, ...) dlopen libfuse.so.2 on startup and
     # abort with "dlopen(): error loading libfuse.so.2" when it is missing —
@@ -99,6 +165,7 @@
       register: fuse2t64_policy
       changed_when: false
       failed_when: false
+      check_mode: false
       when: install_appimage_support | bool
       tags: [base, appimage]
 
@@ -183,6 +250,49 @@
         - docker_add_user_to_group | bool
       tags: [docker]
 
+    # ---------------------------------------------------------------- devpod
+    # No apt repo, no distro package and no installer script: the documented
+    # Linux install is a bare one-liner,
+    #   curl -L -o devpod ".../releases/latest/download/devpod-linux-amd64" \
+    #     && sudo install -c -m 0755 devpod /usr/local/bin && rm -f devpod
+    # which is what the get_url below is — same asset, same destination, same
+    # mode, minus the temp file. Asset names are
+    # devpod-linux-<arch> using dpkg's own architecture spelling, so deb_arch
+    # drops straight in with no mapping — unlike ansible_architecture, which
+    # would say x86_64 and 404.
+    #
+    # DevPod drives containers through a provider; the default one is docker,
+    # which install_docker above provides. Nothing here enforces that pairing —
+    # DevPod also targets ssh, kubernetes and cloud providers — but with both
+    # toggles off `devpod up` has nothing local to build on.
+    #
+    # check_mode: false for the same reason as the probes above; the binary is
+    # absent on a first run, hence failed_when: false rather than a stat.
+    - name: DevPod | Check installed version
+      ansible.builtin.command: "{{ devpod_install_dir }}/devpod version"
+      register: devpod_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: install_devpod | bool
+      tags: [devpod]
+
+    # `devpod version` prints the bare tag ("v0.6.15", no trailing newline), so
+    # it compares directly against devpod_version. A mismatch covers both the
+    # missing binary (empty stdout) and an upgrade after bumping the pin.
+    - name: DevPod | Install CLI {{ devpod_version }}
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/loft-sh/devpod/releases/download/{{ devpod_version }}/devpod-linux-{{ deb_arch }}
+        dest: "{{ devpod_install_dir }}/devpod"
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - install_devpod | bool
+        - (devpod_installed.stdout | default('') | trim) != devpod_version
+      tags: [devpod]
+
     # ------------------------------------------------------------------- kvm
     # x86 advertises virtualization through the vmx/svm cpu flag. arm64 has no
     # equivalent: KVM there depends on the kernel having been entered at EL2,
@@ -194,6 +304,7 @@
       register: kvm_flags
       changed_when: false
       failed_when: false
+      check_mode: false
       when:
         - install_kvm | bool
         - deb_arch == 'amd64'
@@ -274,6 +385,7 @@
       register: kvm_active_nets
       changed_when: false
       failed_when: false
+      check_mode: false
       when: install_kvm | bool
       tags: [kvm]
 
@@ -372,6 +484,7 @@
       changed_when: false
       # Exits non-zero when logged out, which is a state to read, not an error.
       failed_when: false
+      check_mode: false
       when:
         - install_tailscale | bool
         - tailscale_authkey | length > 0
@@ -659,6 +772,28 @@
         mode: "0644"
       when: install_opencode | bool
       tags: [ai, opencode]
+
+    # ----------------------------------------------------------------- herdr
+    # Same shape as the Claude Code native install: an upstream script that
+    # drops a single binary in ~/.local/bin and updates itself from then on
+    # (`herdr update`), so it runs as target_user rather than root and is
+    # guarded with creates: to keep it a one-off.
+    #
+    # No PATH task, unlike OpenCode: ~/.local/bin is what Ubuntu's stock
+    # ~/.profile already adds, and it is where claude lives too.
+    #
+    # The installer covers linux x86_64 and aarch64 — the same two the
+    # architecture assert allows — and verifies a SHA-256 from the release
+    # manifest before installing.
+    - name: Herdr | Install for {{ target_user }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: set -o pipefail && curl -fsSL https://herdr.dev/install.sh | sh
+        executable: /bin/bash
+        creates: "~/.local/bin/herdr"
+      when: install_herdr | bool
+      tags: [ai, herdr]
 
   post_tasks:
     - name: Summary
