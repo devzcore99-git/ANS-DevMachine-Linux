@@ -58,6 +58,7 @@ install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode
 install_herdr: true               ## Herdr terminal workspace manager
+install_graphify: true            ## Graphify code-graph CLI
 install_devpod: true              ## DevPod dev-environment CLI
 install_tailscale: true           ## Tailscale VPN
 
@@ -156,3 +157,15 @@ devpod_version: v0.6.15
 # runtime install_appimage_support already provides. The CLI covers
 # `devpod up`; add the GUI by hand if you want it.
 devpod_install_dir: /usr/local/bin
+
+# --- Graphify --------------------------------------------------------------
+# The PyPI package is 'graphifyy'. Two y's is not a typo: the project ships
+# under that name while 'graphify' is being reclaimed upstream, and the CLI it
+# installs is still called graphify. The npm package of the same name is a
+# different author's stub, so PyPI is the only correct source — the same
+# warning .devcontainer/install-graphify.sh carries.
+#
+# Pinned, and pinned to the version the devcontainer pins, so the host and the
+# container answer `graphify query` from the same build. Bump both together;
+# latest is at https://pypi.org/project/graphifyy/.
+graphify_version: "0.9.49"
