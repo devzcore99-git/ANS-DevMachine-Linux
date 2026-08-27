@@ -795,6 +795,71 @@
       when: install_herdr | bool
       tags: [ai, herdr]
 
+    # -------------------------------------------------------------- graphify
+    # Installed with pipx, matching .devcontainer/install-graphify.sh. A plain
+    # `pip install` is not an option: Ubuntu's python is PEP 668
+    # externally-managed and refuses, and --break-system-packages puts ~25
+    # dependencies (networkx, numpy, a tree-sitter grammar per language) on top
+    # of the system interpreter to get one CLI. pipx gives each its own venv and
+    # links the entry points into ~/.local/bin, which is already where claude
+    # and herdr live and what Ubuntu's stock ~/.profile puts on PATH.
+    #
+    # pipx itself comes from the archive rather than pip, for the same PEP 668
+    # reason — it is the one piece that has to exist before anything else can be
+    # installed this way.
+    #
+    # This deliberately does not run `graphify install`, the vendor's skill
+    # installer: it writes a /graphify SKILL.md into ~/.claude/skills, appends a
+    # registration block to ~/.claude/CLAUDE.md and registers a PreToolUse hook,
+    # all of which would sit beside the /graphify-update skill and Code Graph
+    # rules this workspace already carries. The CLI is the part the machine
+    # needs. Run it by hand if you want the vendor skill layer too.
+    - name: Graphify | Install pipx
+      ansible.builtin.apt:
+        name: pipx
+        state: present
+      when: install_graphify | bool
+      tags: [ai, graphify]
+
+    # `pipx list --short` prints one "<package> <version>" line per install, so
+    # it answers both questions at once: whether this graphify is the pipx one
+    # and whether it is the pinned version. `graphify --version` would answer
+    # only the second, and would happily accept a hand-rolled venv on PATH — the
+    # playbook would then report success while the machine did not match what it
+    # describes. This box is exactly that case: a ~/.venvs/graphifyy built by
+    # hand, at the pinned version, which a version-only guard would leave alone
+    # forever.
+    #
+    # failed_when: false covers the first run, where pipx does not exist yet in
+    # check mode and the probe cannot run at all.
+    - name: Graphify | Check for a pipx-managed install
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.command: pipx list --short
+      register: graphify_pipx
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: install_graphify | bool
+      tags: [ai, graphify]
+
+    # --force rather than a bare install: pipx refuses when the package is
+    # already present, which would turn an upgrade into a failure instead of
+    # putting the pinned version in place. It is also what lets this adopt an
+    # existing hand-made install — the entry points in ~/.local/bin get
+    # repointed at the pipx venv, leaving the old one on disk, unused and safe
+    # to delete by hand.
+    - name: Graphify | Install graphifyy {{ graphify_version }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: pipx install --force "graphifyy=={{ graphify_version }}"
+        executable: /bin/bash
+      when:
+        - install_graphify | bool
+        - "'graphifyy ' ~ graphify_version not in (graphify_pipx.stdout | default(''))"
+      tags: [ai, graphify]
+
   post_tasks:
     - name: Summary
       ansible.builtin.debug:
