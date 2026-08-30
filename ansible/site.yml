@@ -57,6 +57,33 @@
           -e target_user=ahill
       tags: always
 
+    # The `creates:` guards on the user-scoped installs below are evaluated
+    # with glob.glob(), which does NOT expand `~` — a tilde path there matches
+    # nothing, so the guard never fires and the installer it guards re-runs on
+    # every play, reporting changed forever. Resolve the home directory once
+    # here and use it literally.
+    #
+    # check_mode: false for the same reason as the probes above: reading a
+    # value is not a change, and skipping it would leave target_user_home empty
+    # and point three creates: paths at /.local/bin during a dry run.
+    #
+    # Like target_user and ansible_become_exe, this reads the machine Ansible
+    # is connected to, which is this one only because the inventory is
+    # `localhost ansible_connection=local`.
+    - name: Resolve the target user's home directory
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ target_user }}"
+      check_mode: false
+      tags: always
+
+    # getent_passwd drops the name and keeps the remaining fields in order:
+    # password, uid, gid, gecos, home, shell.
+    - name: Record the target user's home directory
+      ansible.builtin.set_fact:
+        target_user_home: "{{ ansible_facts.getent_passwd[target_user][4] }}"
+      tags: always
+
     - name: Install repository prerequisites
       ansible.builtin.apt:
         name:
@@ -744,7 +771,7 @@
       ansible.builtin.shell:
         cmd: set -o pipefail && curl -fsSL https://claude.ai/install.sh | bash -s {{ claude_code_channel }}
         executable: /bin/bash
-        creates: "~/.local/bin/claude"
+        creates: "{{ target_user_home }}/.local/bin/claude"
       when:
         - install_claude_code | bool
         - claude_code_install_method == 'native'
@@ -757,7 +784,7 @@
       ansible.builtin.shell:
         cmd: set -o pipefail && curl -fsSL https://opencode.ai/install | bash
         executable: /bin/bash
-        creates: "~/.opencode/bin/opencode"
+        creates: "{{ target_user_home }}/.opencode/bin/opencode"
       when: install_opencode | bool
       tags: [ai, opencode]
 
@@ -791,7 +818,7 @@
       ansible.builtin.shell:
         cmd: set -o pipefail && curl -fsSL https://herdr.dev/install.sh | sh
         executable: /bin/bash
-        creates: "~/.local/bin/herdr"
+        creates: "{{ target_user_home }}/.local/bin/herdr"
       when: install_herdr | bool
       tags: [ai, herdr]
 
@@ -860,6 +887,71 @@
         - "'graphifyy ' ~ graphify_version not in (graphify_pipx.stdout | default(''))"
       tags: [ai, graphify]
 
+    # --------------------------------------------------------------- secrets
+    # The `age` package ships both `age` and `age-keygen`. Nothing here
+    # configures either tool: generate a key with
+    # `age-keygen -o ~/.config/sops/age/keys.txt`, which is where SOPS looks by
+    # default.
+    - name: age | Install
+      ansible.builtin.apt:
+        name: age
+        state: present
+      when: install_age | bool
+      tags: [secrets, age]
+
+    # SOPS is the one component here that comes from a direct URL rather than a
+    # repo: upstream publishes no apt repo, and the archive's only match for the
+    # name is `orca-sops`, an unrelated GNOME package. See group_vars/all.yml.
+    #
+    # check_mode: false for the same reason as the probes above — this only
+    # reads, and skipping it would leave sops_resolved_version undefined and
+    # fail the dry run at the task after next.
+    - name: SOPS | Resolve the latest release
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ sops_github_repo }}/releases/latest"
+        return_content: true
+      register: sops_latest
+      check_mode: false
+      when:
+        - install_sops | bool
+        - sops_version == 'latest'
+      tags: [secrets, sops]
+
+    - name: SOPS | Record the version to install
+      ansible.builtin.set_fact:
+        sops_resolved_version: >-
+          {{ (sops_latest.json.tag_name | regex_replace('^v', ''))
+             if sops_version == 'latest'
+             else sops_version }}
+      when: install_sops | bool
+      tags: [secrets, sops]
+
+    # --disable-version-check is not optional here: without it `sops --version`
+    # queries GitHub to compare against the newest release and appends its
+    # verdict to the line, which both adds a network round trip to every play
+    # and puts a second version number into the string matched below.
+    - name: SOPS | Check which version is installed
+      ansible.builtin.command: sops --version --disable-version-check
+      register: sops_installed
+      changed_when: false
+      # Non-zero here means "not installed yet", which is a state to read.
+      failed_when: false
+      check_mode: false
+      when: install_sops | bool
+      tags: [secrets, sops]
+
+    # Matched against the whitespace-split tokens rather than as a substring:
+    # "3.1" occurs inside "3.13.3", and a substring test would silently decide
+    # an older SOPS was already the requested one.
+    - name: SOPS | Install {{ sops_resolved_version | default('') }} from the release .deb
+      ansible.builtin.apt:
+        deb: >-
+          https://github.com/{{ sops_github_repo }}/releases/download/v{{ sops_resolved_version }}/sops_{{ sops_resolved_version }}_{{ deb_arch }}.deb
+      when:
+        - install_sops | bool
+        - sops_resolved_version not in (sops_installed.stdout | default('')).split()
+      tags: [secrets, sops]
+
   post_tasks:
     - name: Summary
       ansible.builtin.debug:
@@ -870,3 +962,6 @@
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
                 if (install_tailscale | bool) and (tailscale_authkey | length == 0)
                 else 'Tailscale: connected (or an auth key was supplied).' }}"
+          - "{{ 'SOPS has no key yet; make one with: age-keygen -o ~/.config/sops/age/keys.txt'
+                if (install_sops | bool) and (install_age | bool)
+                else 'SOPS/age: not both installed, so no key hint applies.' }}"

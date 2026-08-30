@@ -23,6 +23,8 @@ The same set of software installs on both: every third-party repo used here publ
 | Herdr | `herdr.dev/install.sh` → `~/.local/bin` |
 | Graphify | `graphifyy` on PyPI, via pipx → `~/.local/bin` |
 | DevPod CLI | GitHub release binary → `/usr/local/bin` |
+| age | Ubuntu archive |
+| SOPS | `github.com/getsops/sops` release `.deb` |
 
 ## Architecture
 
@@ -38,6 +40,8 @@ Everything the playbook installs is available on both. Two things differ:
 | Virtualization probe | `vmx`/`svm` in `/proc/cpuinfo` | presence of `/dev/kvm` |
 
 The KVM package split lives in `kvm_packages_common` / `kvm_packages_by_arch` in `group_vars/all.yml`; adding a platform means adding a key there and to `supported_deb_architectures`.
+
+SOPS adds a third: with no apt repo to pin, `deb_arch` names the release asset directly (`sops_<version>_amd64.deb` / `_arm64.deb`). Upstream publishes both, so nothing is skipped on either machine.
 
 The virtualization probe differs because arm64 has no CPU flag for it. KVM on arm64 depends on the kernel having been entered at EL2, which the firmware decides and which `/proc/cpuinfo` does not report — so `/dev/kvm` is the only honest signal. Either way a missing capability is a warning, not a failure: packages still install and guests fall back to software emulation.
 
@@ -108,7 +112,7 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `herdr`, `graphify`, `tailscale`, plus groups `base`, `browsers`, `editors`, `network`.
+Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `ai`, `claude`, `opencode`, `herdr`, `graphify`, `tailscale`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `network`, `secrets`.
 
 ```bash
 ansible-playbook site.yml --tags docker,kvm
@@ -141,6 +145,10 @@ ansible-playbook site.yml -e claude_code_install_method=apt
 - **Graphify installs with pipx, and the package is `graphifyy`.** Two y's is not a typo — the project ships under that name on PyPI while `graphify` is reclaimed upstream, the CLI it installs is still `graphify`, and the npm package of the same name is a different author's stub. pipx rather than pip because Ubuntu's python is PEP 668 externally-managed (a plain `pip install` refuses, and `--break-system-packages` would put ~25 dependencies on the system interpreter for one CLI); pipx gives it a private venv and links the entry points into `~/.local/bin`. `graphify_version` is pinned to the same version `.devcontainer/install-graphify.sh` pins, so the host and the container answer from the same build — bump them together. The playbook does **not** run `graphify install`, the vendor's skill installer, since this workspace already carries the `/graphify-update` skill and Code Graph rules it would duplicate.
 - **DevPod is a pinned binary, not a package.** Upstream ships no apt repo and no distro package, only a static CLI per GitHub release, so `devpod_version` in `group_vars/all.yml` names the version and the playbook compares it against `devpod version` before downloading — bump the var to upgrade, and it's a no-op otherwise. `latest` isn't accepted: the guard needs an exact string to compare, and without one every run would re-fetch 85 MB. Upstream publishes no installer script; the documented Linux install is a `curl … && sudo install -c -m 0755 devpod /usr/local/bin` one-liner, which is exactly what the `get_url` task is — same asset, same destination, same mode. The CLI doesn't self-update, so bumping the pin *is* the documented upgrade ("download the latest version again"). There's a desktop app too, but amd64-only, which would make it the one component that skips arm64 — the playbook installs the CLI and leaves the GUI to you (it's an AppImage now, upstream having dropped deb/rpm, so `install_appimage_support` already covers its fuse2 dependency). DevPod's default provider is Docker, which `install_docker` covers.
 - **OpenCode's installer** appends to shell rc files itself; the playbook also ensures `~/.profile` has the PATH entry and guards the install with `creates:` so it runs once.
+- **`creates:` paths are absolute, resolved from `getent passwd`.** The `command`/`shell` modules test `creates:` with `glob.glob()`, which does **not** expand `~` — a tilde path there matches nothing, so the guard never fires and the installer it guards re-runs on every play, reporting `changed` forever. `pre_tasks` resolves `target_user_home` once and the three user-scoped installs (Claude Code, OpenCode, Herdr) use it literally. Like `target_user` and `ansible_become_exe`, that lookup reads the machine Ansible is connected to, which is the target only because the inventory is `localhost ansible_connection=local`.
+- **SOPS comes from a GitHub release `.deb`, the only direct-URL install here.** There is no upstream apt repo, and the archive's only match for the name is `orca-sops`, an unrelated GNOME package. A URL cannot say "current" the way a suite can, so it needs a version: `sops_version` defaults to `latest`, resolved through the releases API at run time. Pin a number — `-e sops_version=3.13.3` — on a machine that must not move, or where the unauthenticated rate limit (60 requests/hour/IP) is a problem. Unlike `graphify_version` there is no devcontainer pin to stay level with; nothing in `.devcontainer` installs SOPS. The install is skipped when that version is already present, so a re-run does not re-download.
+- **`sops --version` is called with `--disable-version-check`.** Without the flag it queries GitHub to compare against the newest release and appends the verdict to its output — a network round trip on every play, and a second version number in the string the playbook parses. The comparison matches whitespace-split tokens rather than a substring, because `3.1` occurs inside `3.13.3`.
+- **`age` and SOPS are installed, not configured.** The `age` package ships both `age` and `age-keygen`; generate a key with `age-keygen -o ~/.config/sops/age/keys.txt`, which is where SOPS looks by default.
 - **Read-only probes carry `check_mode: false`.** `--check` skips `command` tasks by default, and the first thing the playbook runs is `dpkg --print-architecture` — skipped, `deb_arch` comes out empty, and the architecture assert kills the dry run at the third task before it reports anything. The same skip made the FUSE 2 probe fall back to the wrong package name in `--check` output. Reading a value isn't a change, so those probes run in either mode.
 - **Apt sources pin an architecture explicitly.** Without a pin, apt queries each third-party repo for every foreign architecture `dpkg` has enabled — `i386` is commonly enabled by Steam or Wine — and hard-fails on the index it doesn't find.
 - **Claude Code and OpenCode install via upstream scripts** that detect the architecture themselves, so the `native` path needs nothing arch-specific from the playbook.

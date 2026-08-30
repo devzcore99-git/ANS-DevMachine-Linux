@@ -23,6 +23,8 @@ page is the short version.
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
+| age | Ubuntu archive |
+| SOPS | `github.com/getsops/sops` release `.deb` |
 
 Every component is behind an `install_*` toggle in
 `ansible/group_vars/all.yml`, and all of them default to on.
@@ -89,8 +91,8 @@ ansible-playbook site.yml -e @selection.local.yml   # repeat a menu selection
 ```
 
 Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`,
-`appimage`, `ai`, `claude`, `opencode`, `tailscale`, plus the groups `base`,
-`browsers`, `editors`, `network`.
+`appimage`, `ai`, `claude`, `opencode`, `tailscale`, `age`, `sops`, plus the
+groups `base`, `browsers`, `editors`, `network`, `secrets`.
 
 ## What to expect
 
@@ -126,3 +128,12 @@ Tags: `docker`, `kvm`, `brave`, `chrome`, `vscode`, `codium`, `git`, `btop`,
 - On Ubuntu derivatives whose codename differs from upstream (Mint 22 is Ubuntu
   24.04 but reports `wilma`), Tailscale's repo URL will 404 — set
   `-e tailscale_repo_distribution=ubuntu -e tailscale_repo_suite=noble`.
+- **SOPS is the only component fetched by direct URL.** Upstream publishes no
+  apt repo and the archive's `sops` is an unrelated GNOME package, so it comes
+  from the `.deb` on a GitHub release. `sops_version` defaults to `latest`,
+  resolved through the releases API at run time; pin a number
+  (`-e sops_version=3.13.3`) on a machine that must not move, or where the
+  unauthenticated API rate limit (60/hour/IP) gets in the way.
+- **`age` and SOPS are installed, not configured.** The `age` package ships both
+  `age` and `age-keygen`; make a key with
+  `age-keygen -o ~/.config/sops/age/keys.txt`, which is where SOPS looks.
