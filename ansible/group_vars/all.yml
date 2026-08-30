@@ -61,6 +61,8 @@ install_herdr: true               ## Herdr terminal workspace manager
 install_graphify: true            ## Graphify code-graph CLI
 install_devpod: true              ## DevPod dev-environment CLI
 install_tailscale: true           ## Tailscale VPN
+install_age: true                 ## age — file encryption (SOPS backend)
+install_sops: true                ## SOPS — encrypted secrets in git
 
 # --- Docker ----------------------------------------------------------------
 # Adds target_user to the 'docker' group. This grants effective root on the
@@ -169,3 +171,21 @@ devpod_install_dir: /usr/local/bin
 # container answer `graphify query` from the same build. Bump both together;
 # latest is at https://pypi.org/project/graphifyy/.
 graphify_version: "0.9.49"
+
+# --- SOPS / age ------------------------------------------------------------
+# age comes from the Ubuntu archive; the `age` package ships both `age` and
+# `age-keygen`, and there is nothing to configure.
+#
+# SOPS does not. The archive's only match for the name is `orca-sops`, an
+# unrelated GNOME package, and upstream publishes no apt repo — only a per-arch
+# .deb attached to each GitHub release. That makes it the one component here
+# installed from a direct URL, so unlike every other repo-backed component it
+# needs a version: a URL cannot say "current" the way a suite can.
+#
+# 'latest' asks the GitHub releases API at run time, which is what keeps this
+# tracking current. Pin a number instead — sops_version: "3.13.3" — on a
+# machine that must not move, or where the unauthenticated API rate limit
+# (60 requests/hour/IP) gets in the way. Unlike graphify_version there is no
+# devcontainer pin to stay level with; nothing in .devcontainer installs SOPS.
+sops_github_repo: getsops/sops
+sops_version: latest
