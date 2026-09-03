@@ -23,6 +23,7 @@ page is the short version.
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
+| Hermes Agent | `hermes-agent.nousresearch.com/install.sh` → `~/.local/bin` |
 | age | Ubuntu archive |
 | SOPS | `github.com/getsops/sops` release `.deb` |
 

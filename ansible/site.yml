@@ -800,6 +800,78 @@
       when: install_opencode | bool
       tags: [ai, opencode]
 
+    # ---------------------------------------------------------------- hermes
+    # Nous Research's Hermes Agent — a TUI coding/messaging agent. Same outward
+    # shape as the Claude Code native and OpenCode installs (upstream script,
+    # run as target_user, guarded with creates:) but a much heavier install
+    # underneath: install.sh clones the repo to ~/.hermes/hermes-agent, builds
+    # a uv venv, fetches its own Node, and writes a launcher shim — not a
+    # single downloaded binary like claude, opencode and herdr.
+    #
+    # Upstream lists Linux x86_64 and aarch64 as tier 1 from the same URL, so
+    # nothing arch-specific is needed here.
+    #
+    # --skip-setup is not optional. Left off, install.sh finishes by running
+    # `hermes setup`, an interactive provider login that it deliberately reads
+    # from /dev/tty *specifically so that piping the script does not skip it* —
+    # curl | bash is not protection. Under Ansible there is normally no
+    # controlling tty, so the wizard's own probe would skip it, but that is a
+    # property of how the play happens to be invoked rather than anything this
+    # task states. The flag makes it explicit. Run `hermes setup --portal` by
+    # hand afterwards; the summary says so.
+    #
+    # The prerequisite list is what keeps install.sh out of apt. It shells out
+    # to `sudo apt-get install` for anything missing — git, ripgrep, ffmpeg,
+    # libatomic1 (Node's official builds link it and Ubuntu does not always
+    # ship it) — and when sudo needs a password it tries to prompt. Installing
+    # them first means every one of those probes finds its package and returns
+    # without escalating, so apt stays this playbook's job. None is guaranteed
+    # otherwise: only ca-certificates, curl and gnupg are unconditional, and
+    # git is behind its own toggle, so this is also what makes install_hermes
+    # work with install_git false. apt is idempotent, so it is a no-op when the
+    # Git task above already ran. xz-utils is needed to unpack the Node tarball.
+    #
+    # KNOWN SIDE EFFECT: install.sh also symlinks its vendored node, npm and
+    # npx into ~/.local/bin. That directory precedes /usr/bin on Ubuntu's stock
+    # ~/.profile PATH, so on a machine with a system or nvm-managed Node,
+    # Hermes's copy silently becomes the default `node`. Nothing else in this
+    # playbook installs Node, so it is not a conflict here — but it is why
+    # install_hermes is worth switching off on a box that manages its own.
+    - name: Hermes | Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - git
+          - xz-utils
+          - ripgrep
+          - ffmpeg
+          - libatomic1
+        state: present
+      when: install_hermes | bool
+      tags: [ai, hermes]
+
+    # Guarded on the launcher rather than on install.sh's own completion marker
+    # (~/.hermes/hermes-agent/.hermes-bootstrap-complete). The marker is the
+    # stronger signal — it is written last, and only after a fully successful
+    # run — but install.sh skips writing it rather than failing when it cannot
+    # resolve the checkout's HEAD, and a guard that can be legitimately absent
+    # re-runs the installer on every play and reports changed forever. The
+    # launcher matches how claude, opencode and herdr are guarded here. The
+    # cost is that it is written a few steps before the end, so an install
+    # interrupted in those last steps looks complete: delete
+    # ~/.local/bin/hermes to force a clean retry.
+    - name: Hermes | Install for {{ target_user }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          curl -fsSL https://hermes-agent.nousresearch.com/install.sh
+          | bash -s -- --skip-setup
+        executable: /bin/bash
+        creates: "{{ target_user_home }}/.local/bin/hermes"
+      when: install_hermes | bool
+      tags: [ai, hermes]
+
     # ----------------------------------------------------------------- herdr
     # Same shape as the Claude Code native install: an upstream script that
     # drops a single binary in ~/.local/bin and updates itself from then on
@@ -959,6 +1031,9 @@
           - "Docker/KVM group membership does not apply to existing sessions."
           - "Log out and back in (or run: newgrp docker) before using docker without sudo."
           - "Authenticate Claude Code by running: claude"
+          - "{{ 'Hermes is installed but not configured; pick an LLM provider with: hermes setup --portal'
+                if (install_hermes | bool)
+                else 'Hermes: not installed.' }}"
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
                 if (install_tailscale | bool) and (tailscale_authkey | length == 0)
                 else 'Tailscale: connected (or an auth key was supplied).' }}"

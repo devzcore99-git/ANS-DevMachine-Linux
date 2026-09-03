@@ -57,6 +57,7 @@ install_gh: true                  ## GitHub CLI (gh)
 install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode
+install_hermes: true              ## Hermes Agent (Nous Research)
 install_herdr: true               ## Herdr terminal workspace manager
 install_graphify: true            ## Graphify code-graph CLI
 install_devpod: true              ## DevPod dev-environment CLI
