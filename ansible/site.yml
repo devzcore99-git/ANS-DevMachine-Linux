@@ -830,6 +830,10 @@
     # git is behind its own toggle, so this is also what makes install_hermes
     # work with install_git false. apt is idempotent, so it is a no-op when the
     # Git task above already ran. xz-utils is needed to unpack the Node tarball.
+    # build-essential is the one install.sh cannot recover from: it compiles
+    # node-pty natively, and with no C++ compiler present its own
+    # `sudo apt install build-essential` fallback prompts for a password,
+    # fails unattended, and the run exits 1 several steps later.
     #
     # KNOWN SIDE EFFECT: install.sh also symlinks its vendored node, npm and
     # npx into ~/.local/bin. That directory precedes /usr/bin on Ubuntu's stock
@@ -842,6 +846,7 @@
         name:
           - git
           - xz-utils
+          - build-essential
           - ripgrep
           - ffmpeg
           - libatomic1
