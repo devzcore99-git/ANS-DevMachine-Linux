@@ -205,6 +205,260 @@
       when: install_appimage_support | bool
       tags: [base, appimage]
 
+    # --------------------------------------------------------------- node.js
+    # NodeSource, not the archive: `nodejs` there is frozen at release (18.x on
+    # noble, already end-of-life) and comes split from `npm`, which pulls a
+    # second nodejs dependency behind it. NodeSource ships one package with
+    # both, per major line, built for amd64 and arm64.
+    #
+    # Older NodeSource setup scripts wrote a legacy nodesource.list naming a
+    # keyring in /usr/share/keyrings. Left in place beside the .sources below
+    # it is the "Conflicting values set for option Signed-By" hard failure that
+    # breaks *every* apt source, the same trap the Brave and Chrome blocks
+    # handle — so drop it. Only the .list: deleting a .sources here would
+    # delete what this play just wrote.
+    - name: Node.js | Drop the legacy NodeSource source list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/nodesource.list
+        state: absent
+      when: install_nodejs | bool
+      tags: [languages, nodejs]
+
+    - name: Node.js | Fetch signing key
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        dest: /etc/apt/keyrings/nodesource.asc
+        mode: "0644"
+      when: install_nodejs | bool
+      tags: [languages, nodejs]
+
+    # 'nodistro' is not a placeholder: NodeSource publishes a single
+    # distro-independent index rather than one suite per Ubuntu codename, so
+    # unlike Docker or Brave this suite is a literal and does not track
+    # ansible_distribution_release.
+    - name: Node.js | Configure apt repository
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: [deb]
+        uris: "https://deb.nodesource.com/node_{{ nodejs_major }}.x"
+        suites: [nodistro]
+        components: [main]
+        architectures: ["{{ deb_arch }}"]
+        signed_by: /etc/apt/keyrings/nodesource.asc
+        state: present
+        enabled: true
+      register: nodejs_repo
+      when: install_nodejs | bool
+      tags: [languages, nodejs]
+
+    # Without this, which build wins is left to version-string comparison
+    # between two unrelated numbering schemes. That happens to favour
+    # NodeSource today, but it is not something to rely on: an Ubuntu release
+    # carrying the same major would decide it the other way, and the machine
+    # would quietly hold the archive's nodejs instead. Priority 600 is above
+    # the 500 an ordinary repo gets, and this is the file NodeSource's own
+    # setup script writes.
+    - name: Node.js | Pin the nodejs package to NodeSource
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/nodesource
+        content: |
+          Package: nodejs
+          Pin: origin deb.nodesource.com
+          Pin-Priority: 600
+        mode: "0644"
+      when:
+        - install_nodejs | bool
+        - nodejs_pin_nodesource | bool
+      tags: [languages, nodejs]
+
+    # No `npm` in this list — NodeSource's nodejs package carries npm itself,
+    # and the archive's npm would drag the archive's nodejs back in with it.
+    - name: Node.js | Install Node {{ nodejs_major }}.x and npm
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: "{{ nodejs_repo.changed | default(false) }}"
+      when: install_nodejs | bool
+      tags: [languages, nodejs]
+
+    # ------------------------------------------------------------------ rust
+    # rustup, run as target_user — the same shape as the Claude Code native and
+    # OpenCode installs, and for the same reason: it installs into a home
+    # directory and updates itself from then on (`rustup update`). The archive
+    # has a `rustc`, but it is one frozen compiler with no channel switching,
+    # no target installs and no component management, against an upstream that
+    # releases every six weeks.
+    #
+    # rustc does not link binaries itself; it invokes cc. With no C toolchain
+    # present every `cargo build` fails at the link step with "linker `cc` not
+    # found", and nothing in rustup's own install provides one — Ubuntu's rustc
+    # package depends on gcc for exactly this reason.
+    - name: Rust | Install a linker
+      ansible.builtin.apt:
+        name: build-essential
+        state: present
+      when:
+        - install_rust | bool
+        - rust_install_linker | bool
+      tags: [languages, rust]
+
+    # -y suppresses the installer's interactive confirmation; without it the
+    # script sits waiting on stdin. The PATH edit is left to rustup, which
+    # appends `. "$HOME/.cargo/env"` to ~/.profile and to the shell rc files it
+    # finds, rather than being written here as a lineinfile task like
+    # OpenCode's: ~/.cargo/env does more than prepend a directory, and
+    # hand-writing half of it would drift from what `rustup self update` keeps
+    # current.
+    - name: Rust | Install rustup and the {{ rust_toolchain }} toolchain for {{ target_user }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs
+          | sh -s -- -y
+          --profile {{ rust_profile }}
+          --default-toolchain {{ rust_toolchain }}
+        executable: /bin/bash
+        creates: "{{ target_user_home }}/.cargo/bin/rustup"
+      when: install_rust | bool
+      tags: [languages, rust]
+
+    # The install above is a one-off, guarded by creates:, so on its own a
+    # later change to rust_toolchain would have no effect at all — the variable
+    # would describe something the machine does not have. These two tasks are
+    # what make it mean something on every run.
+    #
+    # Called by absolute path: ~/.cargo/bin reaches PATH only through
+    # ~/.cargo/env, which a login shell sources and Ansible's non-interactive
+    # one does not.
+    - name: Rust | Check the active toolchain
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.command: "{{ target_user_home }}/.cargo/bin/rustup show active-toolchain"
+      register: rust_active
+      changed_when: false
+      # Non-zero means rustup is not installed yet, which is a state to read —
+      # the task above installs it moments earlier, or is skipped in check mode.
+      failed_when: false
+      check_mode: false
+      when: install_rust | bool
+      tags: [languages, rust]
+
+    # `rustup show active-toolchain` prints e.g.
+    # "stable-x86_64-unknown-linux-gnu (default)", so the configured name is a
+    # prefix of it — matching the whole string would mean knowing the host
+    # triple, and a prefix test is unambiguous here because no channel name or
+    # version number is a prefix of another.
+    - name: Rust | Make {{ rust_toolchain }} the default toolchain
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.command: "{{ target_user_home }}/.cargo/bin/rustup default {{ rust_toolchain }}"
+      register: rust_default
+      changed_when: rust_default.rc == 0
+      when:
+        - install_rust | bool
+        - not (rust_active.stdout | default('')).startswith(rust_toolchain)
+      tags: [languages, rust]
+
+    # -------------------------------------------------------------------- go
+    # Upstream's tarball into /usr/local, which is what go.dev documents. The
+    # archive's golang-go trails by a release or more and never moves within
+    # one (noble is on 1.22), and Go's compatibility promise makes tracking
+    # current cheap. Tarball names use dpkg's architecture spelling —
+    # go1.25.1.linux-amd64.tar.gz — so deb_arch drops straight in, exactly as
+    # it does for the DevPod asset.
+    #
+    # check_mode: false for the same reason as the probes above: this only
+    # reads, and skipping it would leave go_resolved_version undefined and fail
+    # the dry run two tasks later.
+    - name: Go | Resolve the latest release
+      ansible.builtin.uri:
+        url: https://go.dev/VERSION?m=text
+        return_content: true
+      register: go_latest
+      check_mode: false
+      when:
+        - install_go | bool
+        - go_version == 'latest'
+      tags: [languages, go]
+
+    # That endpoint returns two lines — "go1.25.1" then a "time ..." stamp — so
+    # take the first and drop the "go" prefix, which the download URL spells
+    # out itself rather than repeating.
+    - name: Go | Record the version to install
+      ansible.builtin.set_fact:
+        go_resolved_version: >-
+          {{ (go_latest.content.splitlines()[0] | trim | regex_replace('^go', ''))
+             if go_version == 'latest'
+             else go_version }}
+      when: install_go | bool
+      tags: [languages, go]
+
+    - name: Go | Check which version is installed
+      ansible.builtin.command: "{{ go_install_dir }}/go/bin/go version"
+      register: go_installed
+      changed_when: false
+      # Non-zero here means "not installed yet", which is a state to read.
+      failed_when: false
+      check_mode: false
+      when: install_go | bool
+      tags: [languages, go]
+
+    # `go version` prints "go version go1.25.1 linux/amd64". Matched against
+    # the whitespace-split tokens rather than as a substring, for the reason
+    # the SOPS block gives: "go1.25" occurs inside "go1.25.1", and a substring
+    # test would decide an older toolchain was already the requested one.
+    #
+    # Removed rather than unpacked over: the tarball has no manifest of what it
+    # replaces, so files dropped between releases would survive an in-place
+    # extract and stay on PATH. `rm -rf /usr/local/go` first is upstream's own
+    # documented upgrade step.
+    - name: Go | Remove the previous toolchain
+      ansible.builtin.file:
+        path: "{{ go_install_dir }}/go"
+        state: absent
+      when:
+        - install_go | bool
+        - ('go' ~ go_resolved_version) not in (go_installed.stdout | default('')).split()
+      tags: [languages, go]
+
+    # Unpacked from curl rather than with ansible.builtin.unarchive, which
+    # fetches the archive *before* it consults check mode: a `--check --diff`
+    # dry run would download 80 MB to decide it was going to change something.
+    # A shell task is skipped in check mode instead, and the version comparison
+    # in `when:` is what keeps it a no-op on an up-to-date machine — hence the
+    # rc-guarded changed_when rather than creates:, which cannot express an
+    # upgrade.
+    - name: Go | Install Go {{ go_resolved_version | default('') }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          curl -fsSL https://go.dev/dl/go{{ go_resolved_version }}.linux-{{ deb_arch }}.tar.gz
+          | tar -C {{ go_install_dir }} -xzf -
+        executable: /bin/bash
+      register: go_unpack
+      changed_when: go_unpack.rc == 0
+      when:
+        - install_go | bool
+        - ('go' ~ go_resolved_version) not in (go_installed.stdout | default('')).split()
+      tags: [languages, go]
+
+    # System-wide, because /usr/local/go is root-owned and shared. $HOME
+    # expands in the reading user's own shell, so one file also gives each of
+    # them the ~/go/bin that `go install` writes to. Login shells only —
+    # /etc/profile.d is not read by non-interactive ones, so a fresh session is
+    # needed before `go` is on PATH.
+    - name: Go | Put the toolchain on PATH system-wide
+      ansible.builtin.copy:
+        dest: "{{ go_profile_script }}"
+        content: |
+          # Managed by ANS-DevMachine-Linux (ansible/site.yml).
+          export PATH="$PATH:{{ go_install_dir }}/go/bin:$HOME/go/bin"
+        mode: "0644"
+      when: install_go | bool
+      tags: [languages, go]
+
     # ---------------------------------------------------------------- docker
     - name: Docker | Purge distro-packaged versions
       ansible.builtin.apt:
@@ -835,12 +1089,19 @@
     # `sudo apt install build-essential` fallback prompts for a password,
     # fails unattended, and the run exits 1 several steps later.
     #
-    # KNOWN SIDE EFFECT: install.sh also symlinks its vendored node, npm and
-    # npx into ~/.local/bin. That directory precedes /usr/bin on Ubuntu's stock
-    # ~/.profile PATH, so on a machine with a system or nvm-managed Node,
-    # Hermes's copy silently becomes the default `node`. Nothing else in this
-    # playbook installs Node, so it is not a conflict here — but it is why
-    # install_hermes is worth switching off on a box that manages its own.
+    # KNOWN SIDE EFFECT, and it now collides with install_nodejs: install.sh
+    # also symlinks its vendored node, npm and npx into ~/.local/bin. That
+    # directory precedes /usr/bin on Ubuntu's stock ~/.profile PATH, so with
+    # both toggles on, Hermes's bundled Node — not the NodeSource one this play
+    # installs — is what `node` and `npm` resolve to for target_user. apt still
+    # owns /usr/bin/node, and root's PATH is unaffected, so nothing breaks; the
+    # user's shell just gets a different version than nodejs_major says. The
+    # summary at the end of the run points this out when both are selected.
+    #
+    # Three ways out, none of them worth doing by default: turn off
+    # install_hermes, turn off install_nodejs and let Hermes's copy be the
+    # machine's Node, or delete the three symlinks by hand after the run —
+    # Hermes calls its own node by absolute path and does not need them.
     - name: Hermes | Install prerequisites
       ansible.builtin.apt:
         name:
@@ -1039,6 +1300,15 @@
           - "{{ 'Hermes is installed but not configured; pick an LLM provider with: hermes setup --portal'
                 if (install_hermes | bool)
                 else 'Hermes: not installed.' }}"
+          - "{{ 'Rust and Go reach PATH only in a new login shell - rustup writes ~/.cargo/env, '
+                ~ 'Go comes from ' ~ go_profile_script ~ '.'
+                if (install_rust | bool) or (install_go | bool)
+                else 'Rust/Go: not installed.' }}"
+          - "{{ 'Hermes symlinks its own node/npm into ~/.local/bin, which precedes /usr/bin: '
+                ~ 'your shell gets that Node, not the NodeSource one. Delete those three symlinks '
+                ~ 'to prefer NodeSource; Hermes calls its own by absolute path and does not need them.'
+                if (install_hermes | bool) and (install_nodejs | bool)
+                else 'Node: no Hermes/NodeSource PATH conflict.' }}"
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
                 if (install_tailscale | bool) and (tailscale_authkey | length == 0)
                 else 'Tailscale: connected (or an auth key was supplied).' }}"

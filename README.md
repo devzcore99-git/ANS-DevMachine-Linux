@@ -20,6 +20,9 @@ page is the short version.
 | VSCodium | `download.vscodium.com/debs` |
 | Git, btop | Ubuntu archive |
 | FUSE 2 runtime (for AppImages) | Ubuntu archive |
+| Node.js + npm | `deb.nodesource.com/node_<major>.x` |
+| Rust — rustup, cargo, clippy | `sh.rustup.rs` → `~/.cargo/bin` |
+| Go toolchain | `go.dev/dl` tarball → `/usr/local/go` |
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
@@ -44,8 +47,8 @@ installs `git`, `ansible-core` and `curl` if they are missing.
 ## Usage
 
 The bootstrapper is the intended entry point. Run it as your normal user — it
-refuses to run as root, because the Claude Code and OpenCode installs need a
-real user's home directory:
+refuses to run as root, because the Claude Code, OpenCode and rustup installs
+need a real user's home directory:
 
 ```bash
 ./bootstrap.sh          # checklist of components, then offer to run site.yml
@@ -101,7 +104,8 @@ groups `base`, `browsers`, `editors`, `network`, `secrets`.
   prompts separately for its own `apt-get`, so twice — deliberately; sudo's
   credential cache cannot be reused across Ansible's pty-less become subprocess.
 - **A first run takes a while.** Each newly-added repo triggers its own
-  `apt-get update`, and there are seven of them.
+  `apt-get update`, and there are eight of them. Go's tarball is another 80 MB
+  on top.
 - **Idempotent afterwards.** Every `command`/`shell` task is guarded with
   `changed_when: false`, a conditional `changed_when`, or `creates:`.
 - **Group membership does not apply to your current session.** Log out and back
@@ -129,6 +133,24 @@ groups `base`, `browsers`, `editors`, `network`, `secrets`.
 - On Ubuntu derivatives whose codename differs from upstream (Mint 22 is Ubuntu
   24.04 but reports `wilma`), Tailscale's repo URL will 404 — set
   `-e tailscale_repo_distribution=ubuntu -e tailscale_repo_suite=noble`.
+- **Node.js, Rust and Go each come from upstream rather than the archive**, whose
+  versions are frozen at release: `nodejs` is 18.x on noble (end-of-life) and
+  `golang-go` is 1.22 and never moves. Node comes from NodeSource, one major per
+  `nodejs_major` (even numbers are the LTS lines), with an apt preference so the
+  archive's build cannot win on a later release. Rust is `rustup` in your own
+  home directory, self-updating, with `build-essential` alongside it — without a
+  `cc` every `cargo build` fails at the link step. Go is the `go.dev` tarball in
+  `/usr/local/go`; `go_version` defaults to `latest`, resolved at run time, and
+  takes a bare number (`-e go_version=1.25.1`) to hold a machine still.
+- **Rust and Go only reach `PATH` in a new login shell** — `rustup` writes
+  `~/.cargo/env`, and Go's comes from `/etc/profile.d/go.sh`. Node is in
+  `/usr/bin` and needs nothing.
+- **`install_hermes` and `install_nodejs` overlap.** Hermes's installer symlinks
+  its own vendored `node`/`npm`/`npx` into `~/.local/bin`, which precedes
+  `/usr/bin`, so with both on your shell gets Hermes's Node rather than the
+  NodeSource one. Nothing breaks — apt still owns `/usr/bin/node` — but the
+  version won't be the one `nodejs_major` names. Delete those three symlinks to
+  prefer NodeSource; Hermes calls its own by absolute path.
 - **SOPS is the only component fetched by direct URL.** Upstream publishes no
   apt repo and the archive's `sops` is an unrelated GNOME package, so it comes
   from the `.deb` on a GitHub release. `sops_version` defaults to `latest`,

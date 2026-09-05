@@ -55,6 +55,9 @@ install_btop: true                ## btop resource monitor
 install_git: true                 ## Git
 install_gh: true                  ## GitHub CLI (gh)
 install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
+install_nodejs: true              ## Node.js LTS + npm (NodeSource)
+install_rust: true                ## Rust toolchain (rustup)
+install_go: true                  ## Go toolchain (go.dev tarball)
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode
 install_hermes: true              ## Hermes Agent (Nous Research)
@@ -124,6 +127,83 @@ tailscale_authkey: ""
 # Extra flags for that `tailscale up`, e.g. "--ssh --accept-routes" or
 # "--advertise-exit-node". Ignored unless tailscale_authkey is set.
 tailscale_up_args: ""
+
+# --- Node.js ---------------------------------------------------------------
+# From NodeSource rather than the Ubuntu archive. The archive's nodejs is
+# frozen at release and can be years behind — noble ships 18.x, which is past
+# end-of-life — and it splits npm into a separate package that drags its own
+# nodejs dependency behind it. NodeSource ships one `nodejs` package carrying
+# node and npm together, per major line, for amd64 and arm64.
+#
+# The repo URI embeds the major: node_22.x, node_24.x. Bump this to move
+# between lines; apt then upgrades within the line on its own. Unlike the
+# other repos here the suite is the literal string 'nodistro' — NodeSource
+# publishes one distro-independent index, not one per Ubuntu codename.
+#
+# Even-numbered majors are the LTS lines; odd ones are current and stop getting
+# fixes within months, so pick an even one. 22 is 'Jod', supported to April
+# 2027; 24 ('Krypton') is the newer LTS and NodeSource publishes node_24.x
+# today — this is a one-line bump when you want it.
+#
+# CAVEAT, with install_hermes also on: Hermes's installer symlinks its own
+# vendored node and npm into ~/.local/bin, which precedes /usr/bin on Ubuntu's
+# stock PATH — so target_user's shell resolves `node` to Hermes's copy, not to
+# this one. See the note above the Hermes tasks in site.yml.
+nodejs_major: 22
+
+# Node's own version of the Signed-By conflict the browsers have: an apt
+# preference is what keeps the archive's nodejs from winning on a release
+# whose own nodejs has the higher version string. NodeSource's setup script
+# writes the same file, so this matches what upstream does rather than
+# competing with it. Set false to let ordinary version comparison decide.
+nodejs_pin_nodesource: true
+
+# --- Rust ------------------------------------------------------------------
+# rustup, run as target_user, exactly as upstream documents. There is a
+# `rustc` in the archive, but it is a single frozen compiler with no way to
+# add a target, switch channels or install a component — the things the
+# toolchain is normally used through — and Rust's own release cadence is six
+# weeks. rustup installs into ~/.cargo and updates itself from then on
+# (`rustup update`), so it is user-scoped like Claude Code and OpenCode.
+#
+# The installer is run with -y (no interactive confirmation) and the default
+# profile, which is rustc, cargo, rust-std, rust-docs, rustfmt and clippy.
+# Set rust_profile to 'minimal' for just the compiler, cargo and the stdlib.
+rust_profile: default
+
+# 'stable', 'beta', 'nightly', or a specific version like '1.83.0'. The
+# default toolchain rustup installs and keeps current.
+rust_toolchain: stable
+
+# rustc does not link binaries itself — it shells out to cc, and on a machine
+# without one every `cargo build` fails at the link step with "linker `cc` not
+# found". Nothing in rustup's install provides it. Set false only if you are
+# supplying a linker some other way.
+rust_install_linker: true
+
+# --- Go --------------------------------------------------------------------
+# The go.dev tarball unpacked into /usr/local, which is upstream's own
+# documented Linux install. The archive's golang-go is a release behind at
+# best — noble ships 1.22 and never moves — and Go's compatibility promise
+# makes tracking current the low-risk option.
+#
+# 'latest' asks https://go.dev/VERSION?m=text at run time, the same endpoint
+# `go install golang.org/dl/...` uses, and is what keeps this current. Pin a
+# bare number instead — go_version: "1.25.1" — on a machine that must not
+# move. Either way the playbook compares against `go version` and only
+# downloads when they differ.
+go_version: latest
+
+# Go insists on living at <dir>/go: the toolchain hardcodes that layout, and
+# unpacking elsewhere needs GOROOT set everywhere. So this names the parent —
+# /usr/local gives the standard /usr/local/go.
+go_install_dir: /usr/local
+
+# PATH for Go is set system-wide in /etc/profile.d rather than per-user,
+# because /usr/local/go/bin is root-owned and shared. The same file also adds
+# ~/go/bin, where `go install` puts binaries — that path is per-user but the
+# expansion happens in the user's own shell, so one file covers everyone.
+go_profile_script: /etc/profile.d/go.sh
 
 # --- Claude Code -----------------------------------------------------------
 # 'apt'    -> signed Anthropic apt repo, system-wide, updates via apt upgrade.
