@@ -718,17 +718,73 @@
         - ansible_virtualization_role == 'guest'
       tags: [guest-tools]
 
-    # spice-vdagent needs no unit management: the package ships a systemd user
-    # service plus an XDG autostart entry, both of which start with the desktop
-    # session. qemu-guest-agent is a system service and does need enabling.
-    - name: Guest tools | Enable and start qemu-guest-agent
-      ansible.builtin.systemd_service:
-        name: qemu-guest-agent
-        state: started
-        enabled: true
+    # Neither service is enabled here, and that is not an oversight: both are
+    # udev-activated, and `systemctl enable` on either does nothing.
+    #
+    #   qemu-guest-agent.service ships an *empty* [Install] section, so it is
+    #   `static` — systemctl prints "not meant to be enabled" and exits 0.
+    #   /usr/lib/udev/rules.d/60-qemu-guest-agent.rules starts it instead, on
+    #   the virtio-ports device the host attaches, at every boot and on hotplug.
+    #   (Ansible reads `static` as already-enabled, so `enabled: true` here
+    #   would have been a silent no-op reported as ok.)
+    #
+    #   spice-vdagentd is socket-activated the same way, from
+    #   70-spice-vdagentd.rules, and the per-session half is a systemd *user*
+    #   unit wanted by graphical-session.target plus an XDG autostart entry —
+    #   both start with the desktop session, neither is ours to enable.
+    #
+    # What udev does not cover is the current boot: its rules fire on device
+    # events, and the device event for a channel attached before this run has
+    # long since passed. So start each unit by hand, and only when the channel
+    # it binds to actually exists — qemu-guest-agent.service has
+    # BindsTo=dev-virtio\x2dports-org.qemu.guest_agent.0.device, so starting it
+    # on a VM the host gave no agent channel is a failed job and a failed play.
+    # A VM without either channel installs the packages and waits for the host
+    # to offer one; the next boot picks it up through udev.
+    #
+    # Two tasks rather than a loop: a skipped loop registers no `results` key at
+    # all, so the guards below would have to index into a list that isn't there.
+    # A skipped plain stat leaves `.stat` undefined, which `default(false)`
+    # handles cleanly.
+    - name: Guest tools | Look for the guest agent's virtio channel
+      ansible.builtin.stat:
+        path: /dev/virtio-ports/org.qemu.guest_agent.0
+      register: vm_guest_agent_port
       when:
         - install_vm_guest_tools | bool
         - ansible_virtualization_role == 'guest'
+      tags: [guest-tools]
+
+    - name: Guest tools | Look for the SPICE virtio channel
+      ansible.builtin.stat:
+        path: /dev/virtio-ports/com.redhat.spice.0
+      register: vm_spice_port
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role == 'guest'
+      tags: [guest-tools]
+
+    - name: Guest tools | Start qemu-guest-agent for the current boot
+      ansible.builtin.systemd_service:
+        name: qemu-guest-agent
+        state: started
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role == 'guest'
+        - vm_guest_agent_port.stat.exists | default(false)
+      tags: [guest-tools]
+
+    # The socket, not the service: that is what the udev rule pulls in, and the
+    # user agent's ConditionPathExists on the daemon's socket file is why a
+    # re-login alone would not bring clipboard sharing up without this.
+    - name: Guest tools | Start spice-vdagentd.socket for the current boot
+      ansible.builtin.systemd_service:
+        name: spice-vdagentd.socket
+        state: started
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role == 'guest'
+        - vm_spice_port.stat.exists | default(false)
       tags: [guest-tools]
 
     - name: Guest tools | Report the skip on physical hardware
@@ -1353,8 +1409,10 @@
                 ~ 'to prefer NodeSource; Hermes calls its own by absolute path and does not need them.'
                 if (install_hermes | bool) and (install_nodejs | bool)
                 else 'Node: no Hermes/NodeSource PATH conflict.' }}"
-          - "{{ 'Guest tools installed; clipboard sharing and display resize need the VM '
-                ~ 'to use a SPICE display.'
+          - "{{ 'Guest tools installed. Both agents are started by udev from the virtio '
+                ~ 'channel the host attaches, so what works depends on what the VM was given: '
+                ~ 'a guest-agent channel for virsh shutdown/snapshots, a SPICE display for '
+                ~ 'clipboard and display resize. Clipboard sharing also needs a new desktop login.'
                 if (install_vm_guest_tools | bool) and ansible_virtualization_role == 'guest'
                 else 'Guest tools: not a VM (or not selected), so nothing was installed.' }}"
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
