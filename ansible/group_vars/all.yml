@@ -47,6 +47,7 @@ supported_deb_architectures: [amd64, arm64]
 # menu, so anything meant to be switchable interactively needs one.
 install_docker: true              ## Docker CE + compose & buildx plugins
 install_kvm: true                 ## KVM — qemu, libvirt, virt-manager
+install_vm_guest_tools: true      ## VM guest tools (qemu-guest-agent, spice-vdagent)
 install_brave: true               ## Brave browser
 install_chrome: true              ## Google Chrome
 install_vscode: true              ## Visual Studio Code
@@ -105,6 +106,25 @@ kvm_packages_by_arch:
   arm64:
     - qemu-system-arm   # provides qemu-system-aarch64
     - qemu-efi-aarch64  # AAVMF, the arm64 guest UEFI firmware
+
+# --- VM guest tools --------------------------------------------------------
+# The KVM/QEMU answer to VMware Tools and VirtualBox Guest Additions, for when
+# this workstation is itself a guest rather than the host. There is no single
+# umbrella package; the two halves are:
+#
+#   qemu-guest-agent  host-side control channel over virtio-serial — graceful
+#                     shutdown/reboot from virsh, filesystem freeze so
+#                     snapshots are consistent, and reporting the guest's IP.
+#   spice-vdagent     desktop half — shared clipboard, automatic display
+#                     resize, drag and drop. Needs a SPICE display to do
+#                     anything; harmless with any other graphics.
+#
+# Neither is of any use on bare metal, so the tasks also require Ansible to
+# have detected a guest before installing. See the guest-tools block in
+# site.yml.
+vm_guest_tools_packages:
+  - qemu-guest-agent
+  - spice-vdagent
 
 # --- Tailscale -------------------------------------------------------------
 # Unlike every other repo here, Tailscale's URL embeds the distro *and* its

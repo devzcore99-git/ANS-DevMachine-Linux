@@ -14,6 +14,7 @@ page is the short version.
 |---|---|
 | Docker CE + compose/buildx plugins | `download.docker.com` apt repo |
 | KVM — qemu, libvirt, virt-manager | Ubuntu archive |
+| VM guest tools — qemu-guest-agent, spice-vdagent | Ubuntu archive |
 | Brave | `brave-browser-apt-release.s3.brave.com` |
 | Google Chrome | `dl.google.com/linux/chrome/deb` |
 | VS Code | `packages.microsoft.com/repos/code` |
