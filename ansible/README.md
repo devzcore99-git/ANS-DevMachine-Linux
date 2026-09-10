@@ -10,6 +10,7 @@ The same set of software installs on both: every third-party repo used here publ
 |---|---|
 | Docker CE + compose/buildx | `download.docker.com` apt repo |
 | KVM (qemu, libvirt, virt-manager) | Ubuntu archive |
+| VM guest tools (qemu-guest-agent, spice-vdagent) | Ubuntu archive |
 | Brave | `brave-browser-apt-release.s3.brave.com` |
 | Chrome | `dl.google.com/linux/chrome/deb` |
 | VS Code | `packages.microsoft.com/repos/code` |
@@ -116,7 +117,7 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
+Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `guest-tools`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
 
 ```bash
 ansible-playbook site.yml --tags docker,kvm
@@ -139,6 +140,7 @@ ansible-playbook site.yml -e claude_code_install_method=apt
 
   Reusing sudo's credential cache to collapse that second prompt **does not work anyway**, which is worth recording because it's the obvious thing to try. `sudo -v` does warm the cache, and `sudo -n true` immediately before launching Ansible confirms it — then Ansible still fails with `sudo: a password is required`. `tty_tickets` (on by default) binds the ticket to the terminal, and Ansible runs become from a subprocess with no pty, so sudo can't match the ticket. The only alternatives are holding the password somewhere for Ansible to read or relaxing `tty_tickets` system-wide, and neither is worth saving one prompt on a first run.
 - **Privilege escalation adapts to the release.** Ubuntu 25.10+ puts sudo-rs behind `/usr/bin/sudo`; it ignores the custom prompt Ansible passes with `-p`, so Ansible never matches its own prompt and every task — including `Gathering Facts` — dies with *"Timed out waiting for become success or become password prompt"*. `ansible_become_exe` in `group_vars/all.yml` probes for classic sudo at `/usr/bin/sudo.ws` and falls back to plain `sudo` on 24.04 and earlier, where that path doesn't exist. The probe reads the **control** node's filesystem, which is the target only because the inventory is `localhost ansible_connection=local` — if you repoint it at remote hosts, set the value per-host in the inventory or pass `-e ansible_become_exe=...`.
+- **Guest tools are the mirror image of the KVM block, and there is no one package for them.** The KVM/QEMU equivalent of VMware Tools ships as two: `qemu-guest-agent`, the virtio-serial control channel the host uses for graceful shutdown, consistent snapshots and reporting the guest's IP, and `spice-vdagent`, the desktop half — shared clipboard, automatic display resize, drag and drop — which needs the VM to be using a SPICE display before it does anything. `install_vm_guest_tools` is on by default, but the tasks additionally require `ansible_virtualization_role == 'guest'` (systemd-detect-virt, via fact gathering), so on physical hardware the block prints why it skipped and installs nothing. `spice-vdagent` needs no service task: its systemd *user* unit and XDG autostart entry both start with the desktop session, while `qemu-guest-agent` is a system service the playbook enables.
 - **`docker_add_user_to_group: true`** puts you in the `docker` group, which is effectively root on this host. Set it to `false` to keep Docker sudo-only.
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
 - **`docker_purge_distro_packages`** defaults to `false`. Set it to `true` only if you want `docker.io`/`podman-docker`/`containerd` removed first.

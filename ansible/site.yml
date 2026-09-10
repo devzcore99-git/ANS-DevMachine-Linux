@@ -698,6 +698,50 @@
         - not (kvm_autostart.stat.exists | default(true))
       tags: [kvm]
 
+    # ------------------------------------------------------- vm guest tools
+    # The other side of the KVM block: what a Linux guest needs installed so
+    # its host can manage it, rather than what a host needs to run guests. The
+    # two are independent — a workstation running inside a VM wants these and
+    # may not want libvirt at all.
+    #
+    # Gated on the virtualization fact as well as the toggle. ansible_
+    # virtualization_role comes from systemd-detect-virt, which reports 'guest'
+    # under KVM/QEMU, VMware, Hyper-V and friends; on bare metal it says 'host'
+    # and neither package would have anything to talk to. Leaving the toggle on
+    # by default is therefore safe: it is a no-op on physical hardware.
+    - name: Guest tools | Install qemu-guest-agent and spice-vdagent
+      ansible.builtin.apt:
+        name: "{{ vm_guest_tools_packages }}"
+        state: present
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role == 'guest'
+      tags: [guest-tools]
+
+    # spice-vdagent needs no unit management: the package ships a systemd user
+    # service plus an XDG autostart entry, both of which start with the desktop
+    # session. qemu-guest-agent is a system service and does need enabling.
+    - name: Guest tools | Enable and start qemu-guest-agent
+      ansible.builtin.systemd_service:
+        name: qemu-guest-agent
+        state: started
+        enabled: true
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role == 'guest'
+      tags: [guest-tools]
+
+    - name: Guest tools | Report the skip on physical hardware
+      ansible.builtin.debug:
+        msg: >-
+          Not a virtual machine (ansible_virtualization_role =
+          {{ ansible_virtualization_role }}), so the guest tools were skipped.
+          They only have a host to talk to inside a VM.
+      when:
+        - install_vm_guest_tools | bool
+        - ansible_virtualization_role != 'guest'
+      tags: [guest-tools]
+
     # ------------------------------------------------------------- tailscale
     # Tailscale's published instructions install a legacy .list whose Signed-By
     # points at /usr/share/keyrings/tailscale-archive-keyring.gpg. Adopt that
@@ -1309,6 +1353,10 @@
                 ~ 'to prefer NodeSource; Hermes calls its own by absolute path and does not need them.'
                 if (install_hermes | bool) and (install_nodejs | bool)
                 else 'Node: no Hermes/NodeSource PATH conflict.' }}"
+          - "{{ 'Guest tools installed; clipboard sharing and display resize need the VM '
+                ~ 'to use a SPICE display.'
+                if (install_vm_guest_tools | bool) and ansible_virtualization_role == 'guest'
+                else 'Guest tools: not a VM (or not selected), so nothing was installed.' }}"
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
                 if (install_tailscale | bool) and (tailscale_authkey | length == 0)
                 else 'Tailscale: connected (or an auth key was supplied).' }}"
