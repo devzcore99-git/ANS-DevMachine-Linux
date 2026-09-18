@@ -459,6 +459,103 @@
       when: install_go | bool
       tags: [languages, go]
 
+    # ---------------------------------------------------------------- python
+    # The one language here that comes from the archive rather than upstream.
+    # pip is a client bound to the interpreter it installs into, not a
+    # toolchain with its own release cadence, so the archive build matched to
+    # the archive's python3 is the right one — see group_vars/all.yml.
+    #
+    # python3-venv ships in the same task and not as a separate toggle because
+    # neither half is usable alone: Ubuntu's python3 is PEP 668
+    # externally-managed, so pip outside a virtual environment refuses, and
+    # Ubuntu carves `ensurepip` out of the stdlib package into python3-venv, so
+    # without it `python3 -m venv` cannot make the environment pip needs.
+    - name: Python | Install pip and venv
+      ansible.builtin.apt:
+        name: "{{ python_pip_packages }}"
+        state: present
+      when: install_pip | bool
+      tags: [languages, python, pip]
+
+    # uv has no apt source on any release this playbook targets and Astral
+    # publishes no repo of their own, so this is upstream's standalone
+    # installer, run as target_user — the same shape as rustup, Claude Code and
+    # Herdr. The version handling below is SOPS's, for the same reason: an
+    # installer URL cannot say "current" the way an apt suite can, so the
+    # version has to be resolved and compared by hand.
+    #
+    # check_mode: false because a dry run that skipped this would leave
+    # uv_resolved_version undefined and fail the task after next.
+    - name: uv | Resolve the latest release
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ uv_github_repo }}/releases/latest"
+        return_content: true
+      register: uv_latest
+      check_mode: false
+      when:
+        - install_uv | bool
+        - uv_version == 'latest'
+      tags: [languages, python, uv]
+
+    # uv tags releases bare — "0.12.16", no leading v, unlike SOPS. The
+    # regex_replace is there so a tag that does carry one still resolves to a
+    # plain number, which is what both the installer URL and the comparison
+    # below expect.
+    - name: uv | Record the version to install
+      ansible.builtin.set_fact:
+        uv_resolved_version: >-
+          {{ (uv_latest.json.tag_name | regex_replace('^v', ''))
+             if uv_version == 'latest'
+             else uv_version }}
+      when: install_uv | bool
+      tags: [languages, python, uv]
+
+    # Called by absolute path: ~/.local/bin reaches PATH through Ubuntu's stock
+    # ~/.profile, which a login shell sources and Ansible's non-interactive one
+    # does not.
+    - name: uv | Check which version is installed
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.command: "{{ target_user_home }}/.local/bin/uv --version"
+      register: uv_installed
+      changed_when: false
+      # Non-zero here means "not installed yet", which is a state to read.
+      failed_when: false
+      check_mode: false
+      when: install_uv | bool
+      tags: [languages, python, uv]
+
+    # Matched against the whitespace-split tokens of "uv 0.12.16" rather than as
+    # a substring, for the reason the SOPS task gives: "0.1" occurs inside
+    # "0.12.16", and a substring test would decide an older uv was the requested
+    # one.
+    #
+    # UV_INSTALL_DIR is set rather than left to default, so the path probed
+    # above is the path installed to no matter what XDG variables the
+    # environment carries. UV_NO_MODIFY_PATH because ~/.local/bin is already on
+    # PATH from Ubuntu's own ~/.profile — the same reason the Claude Code,
+    # Hermes and Herdr installs need no PATH task, and unlike OpenCode, whose
+    # ~/.opencode/bin does need one. Left unset the installer writes its own
+    # ~/.local/bin/env and appends a source line to .bashrc, .profile and
+    # .zshenv: three edits to re-add a directory that is already there.
+    - name: uv | Install {{ uv_resolved_version | default('') }} for {{ target_user }}
+      become: true
+      become_user: "{{ target_user }}"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          curl -LsSf https://astral.sh/uv/{{ uv_resolved_version }}/install.sh | sh
+        executable: /bin/bash
+      environment:
+        UV_INSTALL_DIR: "{{ target_user_home }}/.local/bin"
+        UV_NO_MODIFY_PATH: "1"
+      register: uv_install
+      changed_when: uv_install.rc == 0
+      when:
+        - install_uv | bool
+        - uv_resolved_version not in (uv_installed.stdout | default('')).split()
+      tags: [languages, python, uv]
+
     # ---------------------------------------------------------------- docker
     - name: Docker | Purge distro-packaged versions
       ansible.builtin.apt:
@@ -1404,6 +1501,14 @@
                 ~ 'Go comes from ' ~ go_profile_script ~ '.'
                 if (install_rust | bool) or (install_go | bool)
                 else 'Rust/Go: not installed.' }}"
+          - "{{ 'pip is PEP 668 externally-managed: pip install outside a virtual environment '
+                ~ 'refuses. Make one with: python3 -m venv .venv (or uv venv), and use pipx for CLIs.'
+                if (install_pip | bool)
+                else 'pip: not installed.' }}"
+          - "{{ 'uv and uvx are in ~/.local/bin, which Ubuntu adds to PATH from ~/.profile at login - '
+                ~ 'so a new login shell if this run is what created that directory. Upgrade with: uv self update.'
+                if (install_uv | bool)
+                else 'uv: not installed.' }}"
           - "{{ 'Hermes symlinks its own node/npm into ~/.local/bin, which precedes /usr/bin: '
                 ~ 'your shell gets that Node, not the NodeSource one. Delete those three symlinks '
                 ~ 'to prefer NodeSource; Hermes calls its own by absolute path and does not need them.'
