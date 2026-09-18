@@ -21,6 +21,8 @@ The same set of software installs on both: every third-party repo used here publ
 | Node.js + npm | `deb.nodesource.com/node_<major>.x` |
 | Rust (rustup, cargo, clippy…) | `sh.rustup.rs` → `~/.cargo/bin` |
 | Go toolchain | `go.dev/dl` tarball → `/usr/local/go` |
+| pip + venv (`python3-pip`, `python3-venv`) | Ubuntu archive |
+| uv (`uv`, `uvx`) | `astral.sh/uv/<version>/install.sh` → `~/.local/bin` |
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
@@ -117,7 +119,7 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `guest-tools`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
+Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `python`, `pip`, `uv`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `guest-tools`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
 
 ```bash
 ansible-playbook site.yml --tags docker,kvm

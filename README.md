@@ -24,6 +24,8 @@ page is the short version.
 | Node.js + npm | `deb.nodesource.com/node_<major>.x` |
 | Rust — rustup, cargo, clippy | `sh.rustup.rs` → `~/.cargo/bin` |
 | Go toolchain | `go.dev/dl` tarball → `/usr/local/go` |
+| pip + venv | Ubuntu archive |
+| uv — Python package/project manager | `astral.sh/uv` installer → `~/.local/bin` |
 | Tailscale | `pkgs.tailscale.com/stable/<distro>/<codename>` |
 | Claude Code | native installer (default) or Anthropic apt repo |
 | OpenCode | `opencode.ai/install` → `~/.opencode/bin` |
@@ -146,6 +148,15 @@ groups `base`, `browsers`, `editors`, `network`, `secrets`.
 - **Rust and Go only reach `PATH` in a new login shell** — `rustup` writes
   `~/.cargo/env`, and Go's comes from `/etc/profile.d/go.sh`. Node is in
   `/usr/bin` and needs nothing.
+- **Python is split between the archive and upstream, on purpose.** `pip` comes
+  from the archive (`python3-pip`) because it is a client bound to the
+  interpreter it installs into, not a toolchain with its own cadence, and
+  `python3-venv` installs with it — Ubuntu's `python3` is PEP 668
+  externally-managed, so `pip install` outside a virtual environment refuses and
+  `ensurepip` lives in that second package. `uv` has no archive to come from:
+  it is in no Ubuntu release this playbook targets and Astral publishes no apt
+  repo, so it is upstream's installer into `~/.local/bin`, pinnable with
+  `-e uv_version=0.12.16` and otherwise resolved to the current release each run.
 - **`install_hermes` and `install_nodejs` overlap.** Hermes's installer symlinks
   its own vendored `node`/`npm`/`npx` into `~/.local/bin`, which precedes
   `/usr/bin`, so with both on your shell gets Hermes's Node rather than the

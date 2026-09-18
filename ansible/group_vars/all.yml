@@ -59,6 +59,8 @@ install_appimage_support: true    ## FUSE 2 runtime (needed by AppImages)
 install_nodejs: true              ## Node.js LTS + npm (NodeSource)
 install_rust: true                ## Rust toolchain (rustup)
 install_go: true                  ## Go toolchain (go.dev tarball)
+install_pip: true                 ## pip + venv (python3-pip, python3-venv)
+install_uv: true                  ## uv — Python package/project manager
 install_claude_code: true         ## Claude Code
 install_opencode: true            ## OpenCode
 install_hermes: true              ## Hermes Agent (Nous Research)
@@ -224,6 +226,62 @@ go_install_dir: /usr/local
 # ~/go/bin, where `go install` puts binaries — that path is per-user but the
 # expansion happens in the user's own shell, so one file covers everyone.
 go_profile_script: /etc/profile.d/go.sh
+
+# --- Python: pip and uv ----------------------------------------------------
+# pip is the one language tool here taken from the archive rather than upstream,
+# and deliberately: it is not a toolchain but a client bound to the interpreter
+# it installs into, and the archive's python3-pip is the build matched to the
+# archive's python3. Nothing is gained by tracking Astral- or PyPI-current
+# system-wide — a project that wants a newer pip upgrades it inside its own
+# virtual environment, where that decision belongs.
+#
+# python3-venv alongside it is not padding. Ubuntu's python3 is PEP 668
+# externally-managed, so `pip install` outside a virtual environment refuses
+# with "error: externally-managed-environment" — pip is only usable once there
+# is a way to make venvs. Ubuntu splits `ensurepip` out of the stdlib package
+# into python3-venv, so without it `python3 -m venv` fails too and pip has
+# nowhere legal to run. Installing one without the other yields a pip that
+# cannot be used for anything.
+#
+# This is also why the playbook does not reach for pip to install its own
+# Python tools: graphify goes through pipx, which is the archive's supported
+# answer to the same rule. See the graphify block in site.yml.
+python_pip_packages:
+  - python3-pip
+  - python3-venv
+
+# uv, unlike pip, has no apt answer at all. Astral publishes no apt repo —
+# three requests for one are open and unimplemented upstream (uv#8047, #13243,
+# #13640) — and the package is in no Ubuntu release this playbook targets:
+# absent from noble, plucky, questing and resolute alike (`apt-cache policy uv`
+# finds nothing on 26.04). Debian's `uv` source builds only python3-uv-build,
+# the PEP 517 build backend, not the CLI. The first archive `uv` command lands
+# in 26.10 (stonking), in universe and already a minor version behind upstream,
+# which is outside this playbook's range and would not be the better source
+# anyway. Astral's GitHub release assets are per-target tarballs rather than
+# .debs, so the SOPS route of installing a release .deb is not open either.
+#
+# What upstream documents for Linux is the standalone installer, so that is
+# what this uses. That puts uv in the same shape as rustup, Claude Code and
+# Herdr: upstream's script, run as target_user, into ~/.local/bin — which is
+# where uv belongs anyway. It manages its own Python interpreters under
+# ~/.local/share/uv and updates itself with `uv self update`, neither of which
+# fits a root-owned install under /usr/local. If a `uv` package does reach a
+# supported release later, this is the component to revisit.
+#
+# 'latest' asks the GitHub releases API at run time, which is what keeps this
+# current; the playbook compares the answer against `uv --version` and only
+# reinstalls when they differ. Pin a bare number instead — uv_version:
+# "0.12.16" — on a machine that must not move, or where the unauthenticated API
+# rate limit (60 requests/hour/IP) gets in the way. Same trade-off, and the
+# same shape, as sops_version below.
+#
+# NOT a conflict with install_hermes, despite Hermes being a uv application:
+# its installer keeps a uv of its own at ~/.hermes/bin/uv and updates that one,
+# so the two never contend for ~/.local/bin the way Hermes's vendored node does
+# with NodeSource. Nothing here needs to be ordered around it.
+uv_github_repo: astral-sh/uv
+uv_version: latest
 
 # --- Claude Code -----------------------------------------------------------
 # 'apt'    -> signed Anthropic apt repo, system-wide, updates via apt upgrade.
