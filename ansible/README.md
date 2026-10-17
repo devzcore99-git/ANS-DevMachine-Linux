@@ -9,6 +9,7 @@ The same set of software installs on both: every third-party repo used here publ
 | Component | Source |
 |---|---|
 | Docker CE + compose/buildx | `download.docker.com` apt repo |
+| NVIDIA Container Toolkit (only with an NVIDIA GPU) | `nvidia.github.io/libnvidia-container` apt repo |
 | KVM (qemu, libvirt, virt-manager) | Ubuntu archive |
 | VM guest tools (qemu-guest-agent, spice-vdagent) | Ubuntu archive |
 | Brave | `brave-browser-apt-release.s3.brave.com` |
@@ -119,7 +120,7 @@ Keep per-machine variants, edit it by hand, or delete it to fall back to the def
 
 ## Selective runs
 
-Tags: `docker`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `python`, `pip`, `uv`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `guest-tools`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
+Tags: `docker`, `nvidia`, `kvm`, `devpod`, `brave`, `chrome`, `vscode`, `codium`, `git`, `gh`, `btop`, `appimage`, `nodejs`, `rust`, `go`, `python`, `pip`, `uv`, `ai`, `claude`, `opencode`, `hermes`, `herdr`, `graphify`, `tailscale`, `guest-tools`, `age`, `sops`, plus groups `base`, `browsers`, `editors`, `languages`, `network`, `secrets`.
 
 ```bash
 ansible-playbook site.yml --tags docker,kvm
@@ -146,6 +147,7 @@ ansible-playbook site.yml -e claude_code_install_method=apt
 - **`docker_add_user_to_group: true`** puts you in the `docker` group, which is effectively root on this host. Set it to `false` to keep Docker sudo-only.
 - **Group changes need a new login session.** `newgrp docker` works for the current shell.
 - **`docker_purge_distro_packages`** defaults to `false`. Set it to `true` only if you want `docker.io`/`podman-docker`/`containerd` removed first.
+- **The NVIDIA Container Toolkit installs only where there is an NVIDIA card.** It's what makes `--gpus` and compose's GPU `deploy.resources` reservations work, including the `graphics` capability that mounts NVIDIA's Vulkan driver into a container. `install_nvidia_toolkit` is on by default, but the tasks also require an NVIDIA PCI device (vendor `0x10de`, read from sysfs) and `install_docker`, so on other machines it does nothing. It comes from NVIDIA's apt repo (`nvidia_toolkit_channel`: `stable` or `experimental`). That repo is flat, so the `.sources` has suite `/` and no components. Any legacy `nvidia-container-toolkit.list` from NVIDIA's manual instructions is deleted first, for the Signed-By reason above. `nvidia-ctk runtime configure` reports a change on every call, so the playbook greps `daemon.json` for the runtime and runs it only when the runtime is missing. Docker is restarted only on that run, which stops any running containers. The playbook **does not install the NVIDIA kernel driver**, because the right driver branch depends on the card (`sudo ubuntu-drivers install`). The summary warns when no driver is loaded.
 - **Claude Code** defaults to `native` (`~/.local/bin/claude`, self-updating) because that matches the existing install on this box. The `apt` method installs system-wide to `/usr/bin` and updates via `apt upgrade` — but `~/.local/bin` usually precedes `/usr/bin` in `PATH`, so remove the native install first (`rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude`) or you'll have two.
 - **GitHub CLI comes from GitHub's repo, not the archive.** Ubuntu ships `gh` in universe, but frozen at the release it shipped with (2.46 on resolute) and never updated, and `gh` warns about being out of date once it drifts. Its install task is the one place using `state: latest` rather than `present`: on a machine that already has the archive build, `present` would consider the package satisfied and leave the stale version in place, so adding the repo would change nothing until the next unrelated `apt upgrade`. Both are the same package name, so the higher version simply wins — no pinning involved. The keyring goes to `/usr/share/keyrings/githubcli-archive-keyring.gpg`, the path GitHub's own instructions use, for the Signed-By reason described above; any legacy `github-cli.list` left by following those instructions by hand is removed.
 - **FUSE 2** is what AppImages need to mount themselves; without it they exit on `dlopen(): error loading libfuse.so.2`. Nothing else pulls it in now that the archive has moved to FUSE 3. The package is `libfuse2t64` on Ubuntu 24.04+ and `libfuse2` before that (the 64-bit `time_t` rename); the playbook probes for the right one rather than guessing from the release number.
