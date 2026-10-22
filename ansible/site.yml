@@ -628,6 +628,122 @@
         - docker_add_user_to_group | bool
       tags: [docker]
 
+    # -------------------------------------------------------- nvidia toolkit
+    # Gated on hardware as well as the toggle, like the guest tools: a PCI
+    # function with NVIDIA's vendor id. sysfs rather than lspci, because
+    # pciutils is not guaranteed on a minimal install. The GPU's HDMI audio
+    # function matches too, which is fine — it only exists beside the GPU.
+    #
+    # A shell task for the glob; grep exits 1 on no match, which is an answer,
+    # not a failure.
+    - name: NVIDIA toolkit | Look for an NVIDIA PCI device
+      ansible.builtin.shell: grep -lx 0x10de /sys/bus/pci/devices/*/vendor
+      register: nvidia_pci_probe
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - install_nvidia_toolkit | bool
+        - install_docker | bool
+      tags: [docker, nvidia]
+
+    - name: NVIDIA toolkit | Record whether to install
+      ansible.builtin.set_fact:
+        nvidia_toolkit_wanted: >-
+          {{ (install_nvidia_toolkit | bool) and (install_docker | bool)
+             and (nvidia_pci_probe.rc | default(1)) == 0 }}
+      tags: [docker, nvidia]
+
+    # NVIDIA's instructions write a legacy .list naming a dearmored keyring in
+    # /usr/share/keyrings. Drop it *before* writing the .sources below: the two
+    # naming different keyrings for the same URI is the Signed-By failure that
+    # breaks every apt source. NVIDIA ships no package that rewrites the .list,
+    # so unlike Tailscale there is no reason to adopt their keyring path — the
+    # armoured key goes in /etc/apt/keyrings like Docker's.
+    - name: NVIDIA toolkit | Drop legacy source from the upstream instructions
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        state: absent
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
+    - name: NVIDIA toolkit | Fetch signing key
+      ansible.builtin.get_url:
+        url: https://nvidia.github.io/libnvidia-container/gpgkey
+        dest: /etc/apt/keyrings/nvidia-container-toolkit.asc
+        mode: "0644"
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
+    # A flat repository: one directory per architecture, suite '/', and no
+    # components — apt rejects a Components field on a flat suite. The upstream
+    # .list spells the directory $(ARCH); deb_arch is the same dpkg name, and
+    # both amd64 and arm64 are published.
+    - name: NVIDIA toolkit | Configure apt repository
+      ansible.builtin.deb822_repository:
+        name: nvidia-container-toolkit
+        types: [deb]
+        uris: "https://nvidia.github.io/libnvidia-container/{{ nvidia_toolkit_channel }}/deb/{{ deb_arch }}"
+        suites: ["/"]
+        architectures: ["{{ deb_arch }}"]
+        signed_by: /etc/apt/keyrings/nvidia-container-toolkit.asc
+        state: present
+        enabled: true
+      register: nvidia_toolkit_repo
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
+    # The package also brings nvidia-cdi-refresh, which regenerates the CDI
+    # spec in /var/run/cdi whenever the driver changes, so nothing here has to.
+    - name: NVIDIA toolkit | Install
+      ansible.builtin.apt:
+        name: nvidia-container-toolkit
+        state: present
+        update_cache: "{{ nvidia_toolkit_repo.changed | default(false) }}"
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
+    # `nvidia-ctk runtime configure` rewrites daemon.json and reports a write
+    # every time, so it cannot judge its own change. Look for the runtime
+    # first and only configure — and restart Docker — when it is missing.
+    # A daemon.json that does not exist yet is the same answer as one without
+    # the runtime, hence failed_when: false.
+    - name: NVIDIA toolkit | Check Docker for the nvidia runtime
+      ansible.builtin.command: grep -q nvidia-container-runtime /etc/docker/daemon.json
+      register: nvidia_runtime_probe
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
+    - name: NVIDIA toolkit | Register the nvidia runtime with Docker
+      ansible.builtin.command: nvidia-ctk runtime configure --runtime=docker
+      register: nvidia_runtime_configure
+      changed_when: nvidia_runtime_configure.rc == 0
+      when:
+        - nvidia_toolkit_wanted | bool
+        - nvidia_runtime_probe.rc != 0
+      tags: [docker, nvidia]
+
+    # Stops every running container. Only happens on the run that registered
+    # the runtime, which is the first one on a given machine.
+    - name: NVIDIA toolkit | Restart Docker to load the runtime
+      ansible.builtin.systemd_service:
+        name: docker
+        state: restarted
+      when:
+        - nvidia_toolkit_wanted | bool
+        - nvidia_runtime_configure.changed | default(false)
+      tags: [docker, nvidia]
+
+    - name: NVIDIA toolkit | Check for a loaded NVIDIA driver
+      ansible.builtin.stat:
+        path: /proc/driver/nvidia/version
+      register: nvidia_driver_probe
+      when: nvidia_toolkit_wanted | bool
+      tags: [docker, nvidia]
+
     # ---------------------------------------------------------------- devpod
     # No apt repo, no distro package and no installer script: the documented
     # Linux install is a bare one-liner,
@@ -1520,6 +1636,13 @@
                 ~ 'clipboard and display resize. Clipboard sharing also needs a new desktop login.'
                 if (install_vm_guest_tools | bool) and ansible_virtualization_role == 'guest'
                 else 'Guest tools: not a VM (or not selected), so nothing was installed.' }}"
+          - "{{ ('NVIDIA Container Toolkit installed. Check with: '
+                 ~ 'docker run --rm --gpus all ubuntu nvidia-smi'
+                 if nvidia_driver_probe.stat.exists | default(false)
+                 else 'NVIDIA Container Toolkit installed, but no NVIDIA driver is loaded - '
+                 ~ 'containers cannot use the GPU until one is: sudo ubuntu-drivers install, then reboot.')
+                if nvidia_toolkit_wanted | default(false) | bool
+                else 'NVIDIA Container Toolkit: no NVIDIA GPU, Docker not selected, or not selected.' }}"
           - "{{ 'Tailscale is installed but not connected; join a tailnet with: sudo tailscale up'
                 if (install_tailscale | bool) and (tailscale_authkey | length == 0)
                 else 'Tailscale: connected (or an auth key was supplied).' }}"

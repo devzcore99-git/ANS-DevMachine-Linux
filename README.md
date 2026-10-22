@@ -13,6 +13,7 @@ page is the short version.
 | Component | Source |
 |---|---|
 | Docker CE + compose/buildx plugins | `download.docker.com` apt repo |
+| NVIDIA Container Toolkit (only with an NVIDIA GPU) | `nvidia.github.io/libnvidia-container` apt repo |
 | KVM — qemu, libvirt, virt-manager | Ubuntu archive |
 | VM guest tools — qemu-guest-agent, spice-vdagent | Ubuntu archive |
 | Brave | `brave-browser-apt-release.s3.brave.com` |

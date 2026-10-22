@@ -46,6 +46,7 @@ supported_deb_architectures: [amd64, arm64]
 # A toggle without a `##` label still works — it just won't be offered in the
 # menu, so anything meant to be switchable interactively needs one.
 install_docker: true              ## Docker CE + compose & buildx plugins
+install_nvidia_toolkit: true      ## NVIDIA Container Toolkit (GPU access for Docker)
 install_kvm: true                 ## KVM — qemu, libvirt, virt-manager
 install_vm_guest_tools: true      ## VM guest tools (qemu-guest-agent, spice-vdagent)
 install_brave: true               ## Brave browser
@@ -81,6 +82,21 @@ docker_add_user_to_group: true
 # before installing Docker CE. Off by default because it removes packages you
 # may not expect; Docker's own docs recommend it for a clean install.
 docker_purge_distro_packages: false
+
+# --- NVIDIA Container Toolkit ----------------------------------------------
+# What lets a container use an NVIDIA GPU: `--gpus`, compose's
+# `deploy.resources` device reservations, and the `graphics` capability that
+# mounts NVIDIA's Vulkan ICD into the container. From NVIDIA's own apt repo —
+# the archive does not carry it.
+#
+# On by default but a no-op without an NVIDIA card: the tasks also require an
+# NVIDIA PCI device (vendor 0x10de) and install_docker, the same way guest tools
+# require a VM. The kernel driver is NOT installed here — which driver branch a
+# card wants is a per-machine decision (`sudo ubuntu-drivers install`), and the
+# summary says when none is loaded.
+#
+# 'stable' or 'experimental', the two channels NVIDIA publishes.
+nvidia_toolkit_channel: stable
 
 # --- KVM -------------------------------------------------------------------
 # The QEMU system emulator and the guest UEFI firmware are the only pieces of
