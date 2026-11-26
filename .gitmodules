@@ -30,3 +30,7 @@
 	path = .claude/skills/projects-features-suggest
 	url = https://github.com/devzcore99-git/SKILL_projects-features-suggest.git
 	branch = master
+[submodule ".claude/skills/browserhost"]
+	path = .claude/skills/browserhost
+	url = https://github.com/devzcore99-git/SKILL_BrowserHost.git
+	branch = master
